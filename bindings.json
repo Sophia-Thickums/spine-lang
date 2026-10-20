@@ -1,0 +1,15 @@
+{
+  "_note": "law -> the bench check whose failure IS that law's failing condition. A binding is a claim; if the pairing is wrong the law will read green when it should be red, so each one is argued in the comment beside it.",
+  "bindings": [
+    {"law": "INST.05", "bench": "t04_claims_hold",
+     "why": "a claim that stopped holding is a claim nobody re-checked at the surface that owns the fact"},
+    {"law": "COST.01", "bench": "t10_global_pointer_regression",
+     "why": "a pointer that stopped resolving is the index one-liner being quoted after the detail file moved"},
+    {"law": "COST.01", "bench": "t09_my_own_pointers_resolve",
+     "why": "same law, the single-pointer form of it"},
+    {"law": "INST.07", "bench": "t11_conception_ledger",
+     "why": "a concept with no instrument is a declaration made without a lookup behind it"},
+    {"law": "COST.01", "bench": "t05_continuity_on_disk",
+     "why": "continuity that is not on disk is a memory of a note rather than the note"}
+  ]
+}

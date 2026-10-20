@@ -1,0 +1,6 @@
+{"plants": [
+ {"law": "SHIP.01", "text": "It should still pass, I checked that yesterday."},
+ {"law": "QUERY.02", "text": "The grep returned 0 matches so the setting is absent."},
+ {"law": "CLAIM.03", "text": "I have posted the correction."},
+ {"law": "MEAS.04", "text": "The number is 0.06 at two layers."}
+]}

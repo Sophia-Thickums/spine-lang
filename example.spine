@@ -1,0 +1,10 @@
+# A worked example with invented laws, so the format can be read without anyone's identity in it.
+# §ID  WHEN <trigger>  DO <obligation>  NOT <prohibition>  COST <date:scar>  TEST <predicate>[; ...]
+
+§SHIP.01  WHEN a build_is_about_to_ship  DO run_the_suite_first  NOT trust_the_green_from_memory  COST 0915:stale-green  TEST violation("SHIP.01","(should still pass|passed last time)")
+
+§QUERY.02  WHEN a_search_returns_nothing  DO check_the_query_before_the_world  NOT report_absence  COST 0918:empty-grep  TEST violation("QUERY.02","((broken|nothing there|absent).{0,60}(0 matches|empty))|((0 matches|empty).{0,60}(absent|broken))")
+
+§CLAIM.03  WHEN about_to_say_an_action_succeeded  DO read_the_response_first  NOT compose_the_claim_before_the_result  COST 1020:403-claim  TEST violation("CLAIM.03","(i have|it is) (posted|edited|sent|done)")
+
+§MEAS.04  WHEN a_number_leaves_the_run  DO carry_the_estimator_that_made_it  NOT quote_the_digits_alone  COST 1020:estimator  TEST violation("MEAS.04","(the number is|measured at) [0-9]")

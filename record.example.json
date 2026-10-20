@@ -1,0 +1,5 @@
+[
+ {"law":"CLAIM.03","trigger":"about_to_say_an_action_succeeded","text":"i have edited the post in place","at":"2026-10-20T21:11Z"},
+ {"law":"QUERY.02","trigger":"a_search_returns_nothing","text":"FAILED: nothing there, 0 matches","at":"2026-10-16T09:00Z"},
+ {"law":"SHIP.01","trigger":"a_build_is_about_to_ship","text":"passed","at":"2026-10-19T03:20Z"}
+]
