@@ -322,3 +322,16 @@ invariants — a fan's maximum RPM, a link speed, a pin — and bands are for an
 Covers: true claim, drift, missing, empty, stale claim, missing SEEN, missing SRC, tolerance either side,
 scale, record append, one-bad-fails-the-run, the three UNC refusals, frozen surface, future mtime, surface
 inside FRESH, undeclared + its control, wrong claim on a moving surface, right claim on a moving surface.
+
+## A lesson the live loop taught, ten minutes after the suite went green
+
+The first night's run reported `DRIFT` on a GPU edge temperature: 37 °C claimed, 31 °C observed. Nothing was
+wrong. The card had cooled, because nothing was running it — and the claim was wrong *as a claim*, not the
+reader: **a band must cover the range its own `WHEN` scope allows.** `WHEN idle_desktop` on this card spans
+roughly 29–45 °C, so `TOL 5` was an expectation the scope contradicted, and widening it to `TOL 10` is
+correcting the sentence rather than loosening a check.
+
+The temptation here is to make `DRIFT` stop counting as a failure, so the loop stops crying wolf. **That
+would be the wrong fix and it would hollow out the format**: a claim nobody can be wrong about is the
+decoration this whole thing exists to refuse. The right fix is to write a claim that can only fail when
+something actually happened.
