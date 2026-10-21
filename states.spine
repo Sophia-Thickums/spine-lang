@@ -1,0 +1,31 @@
+# states.spine — the descriptive half. What IS, on this machine, right now.
+#
+# A law file says what to DO. This says what is TRUE, and every line carries the surface that owns
+# the fact, how sure I am, and when it was last true. Re-read with:
+#
+#     python3 spine.py observe states.spine
+#
+# Four verdicts, and only one of them is a pass:
+#     OK          the source still says this
+#     DRIFT       the source says something else      (the world moved)
+#     STALE       nobody has looked since <threshold>  (a memory wearing a sight's clothes)
+#     UNREADABLE  the source could not be read        (NOT a pass — this is the bug class we keep paying for)
+#
+# Values taken 2026-10-21T12:52:52 from the live sysfs surfaces. A date-only SEEN is honoured through
+# its last second, so these stay "current" for the rest of today; re-stamp them when you re-read.
+
+§OBS.01  WHEN idle_desktop  IS gpu.xt.edge_c = 37.0  SRC /sys/class/drm/card1/device/hwmon/hwmon1/temp1_input  SCALE 0.001  UNC bounded  SEEN 2026-10-21T12:53:32  TOL 3
+§OBS.02  WHEN idle_desktop  IS gpu.xt.junction_c = 39.0  SRC /sys/class/drm/card1/device/hwmon/hwmon1/temp2_input  SCALE 0.001  UNC bounded  SEEN 2026-10-21T12:53:32  TOL 3
+§OBS.03  WHEN idle_desktop  IS gpu.xt.fan_rpm = 0.0  SRC /sys/class/drm/card1/device/hwmon/hwmon1/fan1_input  UNC exact  SEEN 2026-10-21T12:53:32
+§OBS.04  WHEN idle_desktop  IS gpu.mi25.junction_c = 50.0  SRC /sys/class/drm/card0/device/hwmon/hwmon2/temp2_input  SCALE 0.001  UNC bounded  SEEN 2026-10-21T12:53:32  TOL 3
+§OBS.05  WHEN idle_desktop  IS gpu.fe.pwm = 102.0  SRC /sys/class/drm/card2/device/hwmon/hwmon3/pwm1  UNC exact  SEEN 2026-10-21T12:53:32
+§OBS.06  WHEN idle_desktop  IS net.eno1.speed_mbps = 1000.0  SRC /sys/class/net/eno1/speed  UNC exact  SEEN 2026-10-21T12:53:32
+§OBS.07  WHEN idle_desktop  IS gpu.xt.fan_max_rpm = 6000.0  SRC /sys/class/drm/card1/device/hwmon/hwmon1/fan1_max  UNC exact  SEEN 2026-10-21T12:53:32
+§OBS.08  WHEN ollama_running  IS ollama.vk_pin = 1,2  SRC /run/user/1000/spine/ollama.pin  UNC exact  SEEN 2026-10-21T12:53:32
+§OBS.09  WHEN ollama_running  IS ollama.resident = none  SRC /run/user/1000/spine/ollama.resident  UNC exact  SEEN 2026-10-21T12:53:32
+
+# Deliberately wrong values, kept switched off as the proof that the checker can go red. Uncomment one
+# line at a time; a state file whose lines have never been seen to fail is decoration, not perception.
+#
+# §OBS.X1  WHEN test_can_fail  IS gpu.xt.edge_c = 999  SRC /sys/class/drm/card1/device/hwmon/hwmon1/temp1_input  SCALE 0.001  UNC bounded  SEEN 2026-10-21T12:53:32  TOL 3
+# §OBS.X2  WHEN test_can_fail  IS ghost.value = 1  SRC /sys/class/drm/card9/device/no_such_surface  UNC exact  SEEN 2026-10-21T12:53:32
