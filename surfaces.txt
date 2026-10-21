@@ -1,0 +1,6 @@
+# id | subject | live surface | extra fields passed straight into the claim
+01 | gpu.xt.edge_c     | /sys/class/drm/card1/device/hwmon/hwmon1/temp1_input | SCALE 0.001 UNC bounded TOL 10
+02 | gpu.xt.junction_c | /sys/class/drm/card1/device/hwmon/hwmon1/temp2_input | SCALE 0.001 UNC bounded TOL 10
+03 | gpu.xt.fan_rpm    | /sys/class/drm/card1/device/hwmon/hwmon1/fan1_input  | UNC bounded TOL 200
+04 | gpu.mi25.junction_c | /sys/class/drm/card0/device/hwmon/hwmon2/temp2_input | SCALE 0.001 UNC bounded TOL 10
+05 | net.eno1.speed_mbps | /sys/class/net/eno1/speed | UNC exact

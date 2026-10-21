@@ -43,16 +43,49 @@ def run_scribe():
 
 
 def run_observe(states, record, undeclared=()):
-    cmd = [sys.executable, str(HERE / "spine.py"), "observe", states, "--record", record, "--json"]
-    for d in undeclared:
-        cmd += ["--undeclared", d]
-    r = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
-    try:
-        payload = json.loads(r.stdout)
-    except json.JSONDecodeError:
-        payload = {"states": 0, "errors": [f"observe produced no JSON: {r.stdout[:200]} {r.stderr[:200]}"],
-                   "results": []}
-    return r.returncode, payload
+    """Observe every state file and merge the verdicts. One unreadable file must not hide another's."""
+    merged = {"states": 0, "errors": [], "results": []}
+    worst = 0
+    for st in states:
+        # ★ A FILE MAY DECLARE ITS OWN STALE WINDOW as FILE@SECONDS. An invariant (a fan's maximum, a link
+        # speed, a pin) is legitimately true for a day and it is noise to re-stamp it every cycle; a claim
+        # taken from a live surface seconds ago must not be given the same window. One global number for
+        # both is how a loop either cries wolf or stops looking (outside review, then measured here).
+        path, _, window = st.partition("@")
+        cmd = [sys.executable, str(HERE / "spine.py"), "observe", path, "--record", record, "--json"]
+        if window:
+            cmd += ["--stale-after", window]
+        for d in undeclared:
+            cmd += ["--undeclared", d]
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+        worst = max(worst, r.returncode)
+        try:
+            payload = json.loads(r.stdout)
+        except json.JSONDecodeError:
+            merged["errors"].append(f"{st}: observe produced no JSON ({r.stdout[:120]} {r.stderr[:120]})")
+            worst = max(worst, 1)
+            continue
+        merged["states"] += payload.get("states", 0)
+        merged["results"] += payload.get("results", [])
+        merged["errors"] += payload.get("errors", [])
+    return worst, merged
+
+
+def run_claim_writer(a):
+    """The scribe writes CLAIMS taken from the live surfaces this instant; the reader checks them next cycle.
+
+    ★ This is the piece that stops the stream dying of STALE. A hand-stamped claim is a perception for
+    minutes; a claim written by the same run that read the surface, and checked by a DIFFERENT process
+    later, is a perception that can run forever — and a scribe that dies becomes SOURCE-STALE instead of a
+    quiet stream.
+    """
+    cmd = [sys.executable, str(HERE / "scribe.py"), "--fresh", str(max(60, a.interval * 3))]
+    surfaces = HERE / "surfaces.txt"
+    auto = HERE / "states.auto.spine"
+    if surfaces.exists():
+        cmd += ["--emit-claims", str(auto), "--surfaces", str(surfaces)]
+    r = subprocess.run(cmd, capture_output=True, text=True, timeout=90)
+    return r.returncode, (r.stdout or "") + (r.stderr or "")
 
 
 def cycle(states, record, fh, do_scribe, undeclared=()):
@@ -72,7 +105,8 @@ def cycle(states, record, fh, do_scribe, undeclared=()):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--states", default=str(HERE / "states.spine"))
+    ap.add_argument("--states", action="append", default=[],
+                    help="a state file to observe (repeatable); defaults to states.spine")
     ap.add_argument("--record", default=str(HERE / "stream.jsonl"))
     ap.add_argument("--interval", type=int, default=60)
     ap.add_argument("--once", action="store_true", help="one cycle then exit (for a systemd timer)")
@@ -81,6 +115,8 @@ def main():
                     help="a directory whose every file should have a state line (repeatable)")
     a = ap.parse_args()
 
+    if not a.states:
+        a.states = [str(HERE / "states.spine")]
     Path(a.record).parent.mkdir(parents=True, exist_ok=True)
     with open(a.record, "a", encoding="utf-8") as fh:
         emit(fh, {"kind": "start", "pid": os.getpid(), "interval": a.interval,
@@ -105,7 +141,9 @@ def main():
                     drift = now - last - (a.interval if not a.once else 0)
                     if drift > max(5, a.interval * 0.5):
                         emit(fh, {"kind": "gap", "seconds": round(drift)})
-                rc = cycle(a.states, a.record, fh, not a.no_scribe, a.undeclared)
+                if not a.no_scribe:
+                    run_claim_writer(a)
+                rc = cycle(a.states, a.record, fh, False, a.undeclared)
                 last = time.time()
                 last_mono = time.monotonic()
                 if a.once:
