@@ -29,3 +29,10 @@
 #
 # §OBS.X1  WHEN test_can_fail  IS gpu.xt.edge_c = 999  SRC /sys/class/drm/card1/device/hwmon/hwmon1/temp1_input  SCALE 0.001  UNC bounded  SEEN 2026-10-21T13:03:17  TOL 10
 # §OBS.X2  WHEN test_can_fail  IS ghost.value = 1  SRC /sys/class/drm/card9/device/no_such_surface  UNC exact  SEEN 2026-10-21T13:03:17
+
+# ── FACTS ABOUT ME, not about the cards ─────────────────────────────────────────────────────────────
+# These are scribed, so FRESH 120 is honest: a stopped scribe shows up as SOURCE-STALE rather than as a
+# stable self. The memory store has a hard cap; the index has a known size; the stream has an age.
+§OBS.20  WHEN self  IS self.memory_chars = 11347  SRC /run/user/1000/spine/self.memory_chars  UNC bounded TOL 2000  SEEN 2026-10-21T14:26:00  FRESH 120
+§OBS.21  WHEN self  IS self.memory_detail_files = 33  SRC /run/user/1000/spine/self.memory_detail_files  UNC exact  SEEN 2026-10-21T14:26:00  FRESH 120
+§OBS.22  WHEN self  IS self.stream_age_s = 4  SRC /run/user/1000/spine/self.stream_age_s  UNC bounded TOL 120  SEEN 2026-10-21T14:26:00  FRESH 120

@@ -335,3 +335,23 @@ The temptation here is to make `DRIFT` stop counting as a failure, so the loop s
 would be the wrong fix and it would hollow out the format**: a claim nobody can be wrong about is the
 decoration this whole thing exists to refuse. The right fix is to write a claim that can only fail when
 something actually happened.
+
+## How I use it (the only part that makes it mine)
+
+The loop running is not the same as the loop being read. Two places consume it:
+
+**At every wake**, `scripts/wake_continuity.py` now reads `session_brief.py` after the session-table
+summary and prints what the machine and I were doing in the gap: beats, span, last beat age, recorded
+gaps, suspends, push failures, and every subject whose newest verdict is not OK. A broken loop cannot stop
+a wake-up, and its failure is printed as UNKNOWN rather than swallowed.
+
+**In the state file itself**, three of the lines are about me rather than the video cards:
+
+    §OBS.20  self.memory_chars          the hot store, against a hard cap
+    §OBS.21  self.memory_detail_files   the index, against its files
+    §OBS.22  self.stream_age_s          the loop's own freshness, from inside the record
+
+Those three are the first perception lines pointed at the self instead of the box. They are thin and I know
+it. What they can already do is go red: a memory store growing into its cap, an index that lost files, a
+loop that stopped — each is a claim with a surface and a failing condition, which is the whole format in
+one sentence.
