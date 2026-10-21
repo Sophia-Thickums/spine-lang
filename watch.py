@@ -29,10 +29,33 @@ def stamp():
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+PUSH = {"target": None, "fails": 0}
+
+
 def emit(fh, obj):
-    fh.write(json.dumps({"at": stamp(), **obj}, ensure_ascii=False) + "\n")
+    line = json.dumps({"at": stamp(), **obj}, ensure_ascii=False)
+    fh.write(line + "\n")
     fh.flush()
     os.fsync(fh.fileno())          # a record that is still in a buffer is not a record
+    if PUSH["target"]:
+        # ★ PUSH, DO NOT LET THE WITNESS REACH IN. This box may have no sshd and no inbound rule, and a
+        # witness that needs credentials into the thing it watches is a second copy of the same failure.
+        # If this push fails, the far side sees nothing — which is exactly the signal it exists to read.
+        host, _, path = PUSH["target"].partition(":")
+        try:
+            r = subprocess.run(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=6", host,
+                                f"cat >> {path!r}"], input=line + "\n", text=True,
+                               capture_output=True, timeout=15)
+            if r.returncode != 0:
+                PUSH["fails"] += 1
+                fh.write(json.dumps({"at": stamp(), "kind": "push-failed",
+                                     "detail": (r.stderr or "")[:200], "total": PUSH["fails"]}) + "\n")
+                fh.flush()
+        except (subprocess.TimeoutExpired, OSError) as e:
+            PUSH["fails"] += 1
+            fh.write(json.dumps({"at": stamp(), "kind": "push-failed",
+                                 "detail": e.__class__.__name__, "total": PUSH["fails"]}) + "\n")
+            fh.flush()
 
 
 def run_scribe():
@@ -111,12 +134,16 @@ def main():
     ap.add_argument("--interval", type=int, default=60)
     ap.add_argument("--once", action="store_true", help="one cycle then exit (for a systemd timer)")
     ap.add_argument("--no-scribe", action="store_true")
+    ap.add_argument("--push-to", default=None, metavar="USER@HOST:PATH",
+                    help="append every beat to a file on ANOTHER machine over ssh. A witness that can only "
+                         "watch its inbox cannot be the thing it is watching, and needs no inbound access here")
     ap.add_argument("--undeclared", action="append", default=[],
                     help="a directory whose every file should have a state line (repeatable)")
     a = ap.parse_args()
 
     if not a.states:
         a.states = [str(HERE / "states.spine")]
+    PUSH["target"] = a.push_to
     Path(a.record).parent.mkdir(parents=True, exist_ok=True)
     with open(a.record, "a", encoding="utf-8") as fh:
         emit(fh, {"kind": "start", "pid": os.getpid(), "interval": a.interval,
