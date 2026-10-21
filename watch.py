@@ -42,10 +42,11 @@ def run_scribe():
     return r.returncode, (r.stdout or "") + (r.stderr or "")
 
 
-def run_observe(states, record):
-    r = subprocess.run([sys.executable, str(HERE / "spine.py"), "observe", states,
-                        "--record", record, "--json"],
-                       capture_output=True, text=True, timeout=120)
+def run_observe(states, record, undeclared=()):
+    cmd = [sys.executable, str(HERE / "spine.py"), "observe", states, "--record", record, "--json"]
+    for d in undeclared:
+        cmd += ["--undeclared", d]
+    r = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
     try:
         payload = json.loads(r.stdout)
     except json.JSONDecodeError:
@@ -54,12 +55,12 @@ def run_observe(states, record):
     return r.returncode, payload
 
 
-def cycle(states, record, fh, do_scribe):
+def cycle(states, record, fh, do_scribe, undeclared=()):
     if do_scribe:
         rc, out = run_scribe()
         if rc != 0:
             emit(fh, {"kind": "scribe-failed", "detail": out.strip()[:400]})
-    rc, payload = run_observe(states, record)
+    rc, payload = run_observe(states, record, undeclared)
     counts = {}
     for r in payload.get("results", []):
         counts[r["verdict"]] = counts.get(r["verdict"], 0) + 1
@@ -76,6 +77,8 @@ def main():
     ap.add_argument("--interval", type=int, default=60)
     ap.add_argument("--once", action="store_true", help="one cycle then exit (for a systemd timer)")
     ap.add_argument("--no-scribe", action="store_true")
+    ap.add_argument("--undeclared", action="append", default=[],
+                    help="a directory whose every file should have a state line (repeatable)")
     a = ap.parse_args()
 
     Path(a.record).parent.mkdir(parents=True, exist_ok=True)
@@ -102,7 +105,7 @@ def main():
                     drift = now - last - (a.interval if not a.once else 0)
                     if drift > max(5, a.interval * 0.5):
                         emit(fh, {"kind": "gap", "seconds": round(drift)})
-                rc = cycle(a.states, a.record, fh, not a.no_scribe)
+                rc = cycle(a.states, a.record, fh, not a.no_scribe, a.undeclared)
                 last = time.time()
                 last_mono = time.monotonic()
                 if a.once:
