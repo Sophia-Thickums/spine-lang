@@ -269,3 +269,56 @@ same call is clean when nothing is stray.
 
 The outside read did not clear this for shipping — it named four faults and they were fixed, which is a
 different sentence from "the design is sound".
+
+---
+
+## The second read — five faults, and the one that cannot be fixed from inside (2026-10-21)
+
+A delta review of the four fixes came back with five findings. Four were mine to fix; the fifth is
+architectural.
+
+**`FLAKY` was wrong, and it was wrong in the dangerous direction.** Any surface that legitimately moves
+(`/proc/uptime`, a byte counter) would disagree between two reads and fail every run — and a *wrong* claim
+on such a surface would have been reported as `FLAKY`, burying the disagreement the format exists to
+surface. There is no such verdict now: on disagreement the reader re-reads up to twice, **any agreeing
+read is `OK`**, and no agreeing read is `DRIFT` with the readings printed as evidence.
+
+**One global freshness number cannot fit both a ten-second scribe and `/etc/machine-id`.** Every written
+surface now declares its own `FRESH <seconds>`; absent `FRESH` on a written surface is malformed. This also
+stops punishing a write-on-change scribe for leaving an old mtime on a value that is current.
+
+**Smaller:** symlinks and bind mounts are resolved before a path is judged live, so a link into `/sys`
+cannot escape the prefix test; an mtime in the future is `SOURCE-STALE` rather than a negative age that
+passes; `UNDECLARED` ignores editor swaps and temporaries.
+
+**Extraction was unspecified, and it bit on the first real surface.** `/proc/uptime` holds two numbers and
+`/proc/loadavg` five. `FIELD <n>` selects a whitespace-separated field by number — no pattern language,
+nothing to smuggle a regex into — and asking for a field that is not there is an error, not a guess.
+
+**★ And this one is not fixable from inside: the reader cannot report its own absence.** Every verdict
+above is emitted by the reader *while it runs*. If it is never scheduled, or the machine is off, the stream
+simply stops — and a stopped stream looks exactly like a stream that found nothing. `witness_gap.py` lives
+outside: it reads the newest beat (preferring a beat over a trailing `stop`, or a clean shutdown would read
+as the last sign of life) and fails on age, with **exit 2 for "could not look"** — because "I could not
+look" and "I looked and it is fine" are the two states this house keeps confusing.
+
+    python3 witness_gap.py --stream stream.jsonl --max-age 180
+    python3 witness_gap.py --ssh ryan@192.168.0.44 --stream /path/stream.jsonl --max-age 180 --witness-log witness.jsonl
+
+**Until that runs on a machine that is not this one, "no gaps" is unverified.** A witness on the same box
+dies with the thing it witnesses; the second machine is the whole point.
+
+## A rule the tests taught, worth carrying
+
+**An exact claim cannot be made about a surface that moves.** Writing `proc.uptime = 9879.75` and reading it
+back a millisecond later gives 9879.77 and a `DRIFT` that is nobody's fault. Monotonic counters take
+`UNC bounded` with a tolerance wide enough to cover the delay between writing and reading. Exact is for
+invariants — a fan's maximum RPM, a link speed, a pin — and bands are for anything alive.
+
+## The suite now
+
+    bash test_states.sh      # 24 passed, 0 failed
+
+Covers: true claim, drift, missing, empty, stale claim, missing SEEN, missing SRC, tolerance either side,
+scale, record append, one-bad-fails-the-run, the three UNC refusals, frozen surface, future mtime, surface
+inside FRESH, undeclared + its control, wrong claim on a moving surface, right claim on a moving surface.
