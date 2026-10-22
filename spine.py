@@ -256,18 +256,28 @@ def _select(val, field):
 
 
 def _age_seconds(seen):
-    """SEEN is a date (YYYY-MM-DD) or an ISO timestamp. Unknown shapes are an error, not a guess."""
+    """SEEN is a date (YYYY-MM-DD) or an ISO timestamp. Unknown shapes are an error, not a guess.
+
+    ★ RETURNS THREE THINGS, and the third is the fix for a defect the second caused (saturnia, 2026-10-22):
+    a date-only SEEN was expanded to 23:59:59 so that "true through its last second" would hold for the AGE
+    test — but the same expanded value then went into the future-timestamp guard, so TODAY'S DATE reported
+    -43,199 s (a day and a bit in the future) and was refused as clock skew. The two tests want different
+    clocks: admissibility wants the ACTUAL precision the caller wrote, aging wants the end of the day.
+    So `precise_age` is computed from the value AS WRITTEN, never from the expansion.
+    """
     from datetime import datetime, timezone
     s = seen.strip()
     for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
         try:
             dt = datetime.strptime(s, fmt)
-            if fmt == "%Y-%m-%d":
-                dt = dt.replace(hour=23, minute=59, second=59)  # a date is true through its last second
-            return (datetime.now() - dt).total_seconds(), None
         except ValueError:
             continue
-    return None, f"SEEN {seen!r} is not a date or ISO timestamp"
+        now = datetime.now()
+        precise_age = (now - dt).total_seconds()   # the instant the caller actually wrote
+        if fmt == "%Y-%m-%d":
+            dt = dt.replace(hour=23, minute=59, second=59)  # a date is true through its last second
+        return (now - dt).total_seconds(), None, precise_age
+    return None, f"SEEN {seen!r} is not a date or ISO timestamp", None
 
 
 def _resolve(path):
@@ -302,7 +312,7 @@ def _source_age(path):
 
 def observe_one(st, stale_after):
     """One state line, re-checked against its own source. Returns a dict; 'verdict' is the answer."""
-    age, age_err = _age_seconds(st["seen"])
+    age, age_err, precise_age = _age_seconds(st["seen"])
     observed, why = _read_source(st["src"])
     if observed is not None:
         observed, why = _select(observed, st.get("field"))
@@ -320,9 +330,13 @@ def observe_one(st, stale_after):
     # The surface's own mtime already has this guard; the claim's timestamp did not. A small skew is real
     # (two clocks, one read), so the allowance is declared rather than silently zero.
     CLOCK_SKEW_S = 120
-    if age < -CLOCK_SKEW_S:
+    # ★ ADMISSIBILITY USES THE PRECISION THE CALLER WROTE, NOT THE END-OF-DAY EXPANSION (saturnia, 2026-10-22).
+    # `age` has had a date-only SEEN expanded to 23:59:59 so the age test is fair; feeding THAT into the
+    # future guard made today's date read as -43,199 s and refused it. `precise_age` is the unexpanded value.
+    # A date-only SEEN is never "in the future" unless the date itself is after today.
+    if precise_age is not None and precise_age < -CLOCK_SKEW_S:
         rec["verdict"] = "MALFORMED"
-        rec["why"] = (f"SEEN is {-round(age)}s in the FUTURE (allowance {CLOCK_SKEW_S}s) — a claim cannot be "
+        rec["why"] = (f"SEEN is {-round(precise_age)}s in the FUTURE (allowance {CLOCK_SKEW_S}s) — a claim cannot be "
                       f"read before it was made, and a future timestamp makes every freshness test pass")
         return rec
     rec["age_s"] = round(age)
