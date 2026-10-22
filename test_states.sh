@@ -214,6 +214,44 @@ cat > "$T/freshok.spine" <<EOF
 EOF
 check "surface inside FRESH -> OK" "OK" 0 "$T/freshok.spine"
 
+# (f) ★ A DEADLINE THAT IS NOT A NUMBER IS NOT A DEADLINE (saturnia's finding, arm added 2026-10-22).
+#     `float("nan")` parses and every comparison against it is False, so `src_age > FRESH` is never true
+#     and a source frozen for years earns OK with the deadline still nominally written. Infinity is the
+#     same defect wearing a number: an unbounded allowance. Both must be MALFORMED, and the arm is run on
+#     the SAME frozen source that arm (d) refuses — so a pass here cannot come from the file being fresh.
+touch -d '-10 minutes' "$T/w"
+cat > "$T/nan.spine" <<EOF
+§OBS.F5 WHEN test IS t.v = 42 SRC $T/w UNC exact SEEN $NOW FRESH nan
+EOF
+check "FRESH nan -> MALFORMED" "MALFORMED" 1 "$T/nan.spine"
+
+cat > "$T/inf.spine" <<EOF
+§OBS.F6 WHEN test IS t.v = 42 SRC $T/w UNC exact SEEN $NOW FRESH inf
+EOF
+check "FRESH inf -> MALFORMED" "MALFORMED" 1 "$T/inf.spine"
+
+cat > "$T/neg.spine" <<EOF
+§OBS.F7 WHEN test IS t.v = 42 SRC $T/w UNC exact SEEN $NOW FRESH -5
+EOF
+check "FRESH negative -> MALFORMED" "MALFORMED" 1 "$T/neg.spine"
+
+# (g) ★ A BAD UNC VALUE MUST BE REFUSED BY A MESSAGE, NOT BY A TRACEBACK (outside review, 2026-10-22).
+#     The branch existed from the first day and had never been exercised; it raised TypeError instead of
+#     printing, so the run died with exit 1 and a stack trace. An arm that asserts the exit code alone
+#     would have passed. This one asserts the verdict string, which the crash could not produce.
+cat > "$T/badunc.spine" <<EOF
+§OBS.H1 WHEN test IS t.v = 42 SRC $T/w UNC maybe SEEN $NOW FRESH 60
+EOF
+check "bad UNC -> MALFORMED, no crash" "MALFORMED" 1 "$T/badunc.spine"
+
+if python3 spine.py observe "$T/badunc.spine" 2>&1 | grep -q "Traceback"; then
+  printf 'FAIL  %-34s raised a traceback instead of printing\n' "bad UNC prints no traceback"; fail=$((fail+1))
+else
+  printf 'PASS  %-34s no traceback\n' "bad UNC prints no traceback"; pass=$((pass+1))
+fi
+
+
+
 
 echo
 echo "$pass passed, $fail failed"

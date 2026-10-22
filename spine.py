@@ -82,8 +82,8 @@ def parse_obs(text):
     """
     states, errors = [], []
     head = re.compile(r"^§OBS\.(?P<id>\S+)\s+WHEN\s+(?P<when>.+?)\s+IS\s+(?P<rest>.+)$")
-    marker = re.compile(r"\s+(?=(?:SRC|UNC|SEEN|SCALE|TOL|FRESH|FIELD)\s)")
-    fields = {"SRC", "UNC", "SEEN", "SCALE", "TOL", "FRESH", "FIELD"}
+    marker = re.compile(r"\s+(?=(?:SRC|UNC|SEEN|SCALE|TOL|FRESH|FIELD|SUBJECT|AS-OF)\s)")
+    fields = {"SRC", "UNC", "SEEN", "SCALE", "TOL", "FRESH", "FIELD", "SUBJECT", "AS-OF"}
 
     for n, raw in enumerate(text.splitlines(), 1):
         line = raw.strip()
@@ -113,6 +113,8 @@ def parse_obs(text):
         d["src"] = got.get("SRC", "")
         d["unc"] = got.get("UNC", "")
         d["seen"] = got.get("SEEN", "")
+        d["subject_id"] = got.get("SUBJECT", "")
+        d["as_of"] = got.get("AS-OF", "")
         try:
             d["scale"] = float(got["SCALE"]) if "SCALE" in got else 1.0
             d["tol"] = float(got["TOL"]) if "TOL" in got else 0.0
@@ -127,8 +129,25 @@ def parse_obs(text):
         except ValueError:
             errors.append(f"line {n}: §OBS.{d['id']} SCALE/TOL must be numbers")
             continue
+        # ★ A DEADLINE OF nan OR inf IS NOT A DEADLINE (found by saturnia, 2026-10-21, verified here).
+        # `float("nan")` parses, and every comparison against it is false — so `src_age > FRESH` is False
+        # and a source frozen since 2020 earns OK, with the check still nominally in place. Infinity is
+        # the same defect wearing a number: an unbounded allowance. A duration must be finite and >= 0,
+        # or the line is malformed rather than fresh.
+        if d.get("fresh") is not None and (d["fresh"] != d["fresh"] or d["fresh"] in (float("inf"), float("-inf"))):
+            errors.append(f"line {n}: §OBS.{d['id']} FRESH {got.get('FRESH')!r} is not a finite duration — "
+                          f"nan/inf disables the source-age check while looking like a deadline")
+            continue
+        if d.get("fresh") is not None and d["fresh"] < 0:
+            errors.append(f"line {n}: §OBS.{d['id']} FRESH is negative — a surface cannot be allowed to sit "
+                          f"unrewritten for less than no time")
+            continue
         if d["unc"] not in UNC_VALUES:
-            errors.append(f"line {n}: §OBS.{d['id']} UNC must be one of {sorted('exact','bounded')}, got {d['unc']!r}")
+            # ★ THE REFUSAL ITSELF CRASHED (outside review, 2026-10-22). `sorted('exact','bounded')` takes
+            # ONE iterable — the branch that exists to name a bad UNC raised TypeError instead of writing
+            # its message, so the run died with a traceback and exit 1. It looked green because no arm ever
+            # sent a bad UNC value; the arm below is the fix's other half.
+            errors.append(f"line {n}: §OBS.{d['id']} UNC must be one of {sorted(UNC_VALUES)}, got {d['unc']!r}")
             continue
         # ★ UNC WAS A LABEL THAT CHANGED NO VERDICT (outside review, 2026-10-21). Three refusals make it mean
         # something, and the third one is honest rather than clever: derivation is not implemented, so a
@@ -147,6 +166,19 @@ def parse_obs(text):
             continue
         if not d["seen"]:
             errors.append(f"line {n}: §OBS.{d['id']} has no SEEN — an undated reading is a memory")
+            continue
+        # ★ SUBJECT: THE IDENTITY OF THE THING, NOT ITS NAME (gigawatt, 2026-10-21). SRC names where the
+        # value is read and SEEN/FRESH name when, and nothing named WHAT the value is about — so a surface
+        # can keep answering under a retired identity and every other field passes. Names are not
+        # identities either: `gpu.xt.*` re-pointed at the MI25 the night hwmon numbers swapped, and the
+        # format had nowhere to say "this line is about the card at 0000:03:00.0".
+        if d["subject_id"]:
+            if not re.match(r"^[a-z0-9][a-z0-9._-]*:\S+$", d["subject_id"]):
+                errors.append(f"line {n}: §OBS.{d['id']} SUBJECT must be '<namespace>:<identity>' "
+                              f"(e.g. pci:0000:03:00.0), got {d['subject_id']!r}")
+                continue
+        if d["as_of"] and not re.match(r"^\d{4}-\d{2}-\d{2}$", d["as_of"]):
+            errors.append(f"line {n}: §OBS.{d['id']} AS-OF must be a date (YYYY-MM-DD), got {d['as_of']!r}")
             continue
         if not d["src"].startswith("/"):
             errors.append(f"line {n}: §OBS.{d['id']} SRC must be an absolute file path, got {d['src']!r}")
@@ -167,8 +199,37 @@ def _as_num(v):
         return None
 
 
+def _expand(path):
+    """Turn a SRC that names a NODE BY PATTERN into one real path. Returns (path, why-not).
+
+    ★ WHY THIS EXISTS (2026-10-21, found the hard way). hwmon indices are assigned at probe time and
+    MOVE between boots: card1 was `hwmon1` yesterday and `hwmon2` today, so five sensor lines went
+    blind while both cards were perfectly healthy and answering. A state file that hardcodes an index
+    does not measure the hardware, it measures the kernel's enumeration order — and it fails by
+    reporting the sensor MISSING, which reads exactly like a dead device.
+
+    That is the law this house already carries for the GPUs themselves: PIN BY NAME, NEVER BY INDEX.
+    So a SRC may name its node with a wildcard, and the two ways a wildcard can lie are both refused
+    rather than guessed: ZERO matches is a blind sense, and more than one is ambiguous — taking the
+    first match would be a choice wearing a reading's clothes.
+    """
+    if not any(ch in path for ch in "*?["):
+        return path, None
+    import glob
+    hits = sorted(glob.glob(path))
+    if not hits:
+        return None, "missing (the pattern matches no node — a renamed or absent surface is a blind sense)"
+    if len(hits) > 1:
+        names = ", ".join(os.path.basename(h) for h in hits)
+        return None, f"ambiguous ({len(hits)} nodes match: {names}) — name the one that owns the fact"
+    return hits[0], None
+
+
 def _read_source(path):
     """Read the surface that owns the fact. Returns (value, None) or (None, why-not)."""
+    path, why = _expand(path)
+    if why:
+        return None, why
     try:
         with open(path, "r", encoding="utf-8", errors="strict") as fh:
             raw = fh.read(4096)
@@ -224,14 +285,17 @@ def _source_is_live(path):
     SOURCE's age was not, so a scribe that dies leaves its last file behind and `observe` reads a frozen
     value, agrees with it, and returns OK — a dead sense reporting health forever.
     """
-    real = _resolve(path)
+    real = _resolve(_expand(path)[0] or path)
     return real.startswith("/sys/") or real.startswith("/proc/")
 
 
 def _source_age(path):
+    real, why = _expand(path)
+    if why:
+        return None
     try:
         import time as _t
-        return _t.time() - os.stat(path).st_mtime
+        return _t.time() - os.stat(real).st_mtime
     except OSError:
         return None
 
@@ -249,6 +313,17 @@ def observe_one(st, stale_after):
     }
     if age_err:
         rec["verdict"], rec["why"] = "MALFORMED", age_err
+        return rec
+    # ★ A SEEN THAT HAS NOT HAPPENED YET IS NOT FRESH, IT IS UNREADABLE (found by saturnia, 2026-10-21,
+    # verified here). `_age_seconds` returns a NEGATIVE age for a future timestamp, and `age > stale_after`
+    # is false for any negative number — so `SEEN 2099-01-01` passed every freshness test and reported OK.
+    # The surface's own mtime already has this guard; the claim's timestamp did not. A small skew is real
+    # (two clocks, one read), so the allowance is declared rather than silently zero.
+    CLOCK_SKEW_S = 120
+    if age < -CLOCK_SKEW_S:
+        rec["verdict"] = "MALFORMED"
+        rec["why"] = (f"SEEN is {-round(age)}s in the FUTURE (allowance {CLOCK_SKEW_S}s) — a claim cannot be "
+                      f"read before it was made, and a future timestamp makes every freshness test pass")
         return rec
     rec["age_s"] = round(age)
     if age > stale_after:
@@ -332,13 +407,15 @@ def observe_one(st, stale_after):
 
 def cmd_observe(argv):
     """Re-read every SRC and compare against IS. This is the verb that makes a state file a perception."""
-    path, stale_after, record_path, as_json = None, 900, None, False
+    path, stale_after, record_path, as_json, require_subject = None, 900, None, False, False
     undeclared_dirs = []
     i = 0
     while i < len(argv):
         a = argv[i]
         if a == "--json":
             as_json = True
+        elif a == "--require-subject":
+            require_subject = True
         elif a == "--record":
             i += 1
             if i >= len(argv):
@@ -373,6 +450,13 @@ def cmd_observe(argv):
 
     states, errors = parse_obs(Path(path).read_text(encoding="utf-8"))
     results = [observe_one(s, stale_after) for s in states]
+
+    # ★ A LINE WITH NO SUBJECT IS A CLAIM ABOUT NO PARTICULAR THING, and the default stays permissive only
+    # until the scribe can emit one. `--require-subject` is the strict arm, and it must be runnable red.
+    no_subject = [st["id"] for st in states if not st.get("subject_id")]
+    if require_subject and no_subject:
+        errors.append(f"{len(no_subject)} state(s) name no SUBJECT — the value's identity is unchecked: "
+                      f"{', '.join(no_subject[:6])}")
 
     if record_path:
         from datetime import datetime, timezone
