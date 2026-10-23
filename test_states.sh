@@ -253,6 +253,55 @@ fi
 
 
 
+# (h) ★ A MALFORMED LAW MUST NOT VANISH FROM prove's DENOMINATOR (outside review, 2026-10-21).
+#     cmd_prove discarded parse()'s error list, so an unparseable line was dropped before
+#     counting: four good laws plus one broken one reported 4/4 and exited 0. An omitted line
+#     and a proved line produced the same green. Assert the verdict string AND the exit code,
+#     because either alone passes a branch that refuses for the wrong reason.
+cp example.spine "$T/mixedprove.spine"
+echo '§BROKEN.99 WHEN drafting DO check_result NOT claim_before_result COST 1021:synthetic' >> "$T/mixedprove.spine"
+out=$(python3 spine.py prove "$T/mixedprove.spine" plants.json 2>&1); rc=$?
+if [ "$rc" -eq 1 ] && printf '%s' "$out" | grep -q "MALFORMED"; then
+  printf 'PASS  %-34s MALFORMED (exit 1)\n' "prove refuses a malformed law"; pass=$((pass+1))
+else
+  printf 'FAIL  %-34s exit=%s (want 1 + MALFORMED)\n' "prove refuses a malformed law" "$rc"; fail=$((fail+1))
+fi
+
+cat > "$T/onlybad.spine" <<EOF
+§BROKEN.99 WHEN drafting DO check_result NOT claim_before_result COST 1021:synthetic
+EOF
+python3 spine.py prove "$T/onlybad.spine" plants.json >/dev/null 2>&1; rc=$?
+if [ "$rc" -eq 1 ]; then
+  printf 'PASS  %-34s exit 1 (was 0/0 green)\n' "prove refuses an all-malformed file"; pass=$((pass+1))
+else
+  printf 'FAIL  %-34s exit=%s (want 1)\n' "prove refuses an all-malformed file" "$rc"; fail=$((fail+1))
+fi
+
+# (i) ★ AN UNIMPLEMENTED PREDICATE IS NOT A PASSING ONE (outside review, 2026-10-21).
+#     lint `continue`d on any clause it did not recognise, so a law carrying unsupported("x")
+#     linted clean and exited 0 while check refused the identical clause. A fails() clause is a
+#     legitimate skip and must stay one — the last arm is the control that keeps this honest.
+cat > "$T/unsup.spine" <<EOF
+§UNSUPPORTED.99 WHEN drafting DO check_result NOT claim_before_result COST 1021:synthetic TEST unsupported("x")
+EOF
+echo "a perfectly neutral draft" > "$T/neutral.txt"
+out=$(python3 spine.py lint "$T/unsup.spine" "$T/neutral.txt" 2>&1); rc=$?
+if [ "$rc" -eq 1 ] && printf '%s' "$out" | grep -q "UNKNOWN"; then
+  printf 'PASS  %-34s UNKNOWN (exit 1)\n' "lint refuses an unknown predicate"; pass=$((pass+1))
+else
+  printf 'FAIL  %-34s exit=%s (want 1 + UNKNOWN)\n' "lint refuses an unknown predicate" "$rc"; fail=$((fail+1))
+fi
+
+cat > "$T/failsonly.spine" <<EOF
+§BENCH.98 WHEN drafting DO check_result NOT claim_before_result COST 1021:synthetic TEST fails("gpu_check")
+EOF
+python3 spine.py lint "$T/failsonly.spine" "$T/neutral.txt" >/dev/null 2>&1; rc=$?
+if [ "$rc" -eq 0 ]; then
+  printf 'PASS  %-34s exit 0 (control: still a skip)\n' "lint still skips a fails() clause"; pass=$((pass+1))
+else
+  printf 'FAIL  %-34s exit=%s (want 0 — a bench clause is not a draft clause)\n' "lint still skips a fails() clause" "$rc"; fail=$((fail+1))
+fi
+
 echo
 echo "$pass passed, $fail failed"
 [ "$fail" -eq 0 ]

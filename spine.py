@@ -655,7 +655,17 @@ def cmd_lint(laws_path, text_path):
         for clause in law["test"]:
             m = re.match(r'violation\(\s*"([^"]*)"\s*,\s*"([^"]*)"', clause)
             if not m:
-                continue  # a fails() clause is about a bench check, not about a draft
+                # ★ A fails() clause is about a bench check, not about a draft — that is a
+                # legitimate skip. But ANYTHING ELSE is a clause nobody implemented, and the
+                # first version of this verb `continue`d on it silently, so a law carrying
+                # `TEST unsupported("x")` linted clean and exited 0 while `check` refused the
+                # same clause loudly. An unimplemented predicate is not a passing one
+                # (found by an outside reviewer, 2026-10-21). Say so and go red.
+                if not re.match(r'fails\(\s*"[^"]*"\s*\)$', clause.strip()):
+                    red += 1
+                    print(f"UNKNOWN   §{law['id']:<12} lint cannot evaluate: {clause[:70]}")
+                    print(f"          a clause lint does not understand is not a clause this draft passed")
+                continue
             _, pattern = m.groups()
             hit = re.search(pattern, text, re.I)
             if hit:
@@ -680,8 +690,22 @@ def cmd_prove(laws_path, plants_path):
     the way the breach actually looks. Those two are indistinguishable from the green output — and
     the second one is worse, because it reads as virtue. This is the law-file version of the rule
     that has cost the most elsewhere: a check that cannot fail is not a check.
+
+    ★ A MALFORMED LAW MUST NOT DISAPPEAR FROM THE DENOMINATOR (found by an outside reviewer,
+    2026-10-21). This verb used to discard parse()'s error list, so an invalid rule was simply
+    removed before counting: a file of four good laws plus one unparseable one reported `4/4` and
+    exited 0, and a file containing ONLY the bad law reported `0/0` and exited 0. Both readings
+    are indistinguishable from a clean file, which is the exact defect prove exists to catch,
+    one layer up. Refusing the parse is the only honest answer: a rule that is not in the
+    denominator has not been proved, it has been dropped.
     """
-    laws, _ = parse(Path(laws_path).read_text(encoding="utf-8"))
+    laws, errors = parse(Path(laws_path).read_text(encoding="utf-8"))
+    if errors:
+        print(f"MALFORMED  {laws_path} — {len(errors)} line(s) could not be parsed, so this file's")
+        print("           denominator is not the file you wrote. Refusing to report a ratio.")
+        for e in errors:
+            print(f"           · {e}")
+        return 1
     plants = {p["law"]: p["text"] for p in json.loads(Path(plants_path).read_text(encoding="utf-8"))["plants"]}
     red, proved = 0, 0
     for law in laws:
