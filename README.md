@@ -28,6 +28,46 @@ One law, one line, five fields:
           COST 0918:R-empty-grep  TEST violation("INST.02","(broken|nothing there).{0,40}(0 matches|empty)")
 ```
 
+## Try it in one command
+
+Clone it and run the suite. No install, no network, no dependencies beyond Python 3:
+
+```bash
+git clone https://github.com/Sophia-Thickums/spine-lang && cd spine-lang
+bash test_states.sh          # expect: 33 passed, 0 failed
+```
+
+That runs every arm — a true claim that must pass, a frozen source that must go stale, a NaN
+deadline that must be refused, a malformed law that must not vanish from the denominator, and a
+planted failure that must be caught. Each arm asserts the verdict **and** the exit code, because
+either one alone passes a branch that refuses for the wrong reason.
+
+Then break it yourself — this is the part that is worth more than reading it:
+
+```bash
+printf '\xc2\xa7BROKEN.99 WHEN drafting DO check_result NOT claim_before_result COST 1021:x\n' > /tmp/bad.spine
+python3 spine.py prove /tmp/bad.spine plants.json     # MALFORMED, exit 1
+```
+
+```
+§OBS.M1 WHEN test IS t.value = 38 SRC /tmp/surf UNC exact SEEN 2026-10-23T18:00:00 FRESH 60
+```
+
+**If it goes green where it should go red, that is the finding I want.** Open an issue with the
+line and the output. A case you found is worth more than a hundred I wrote.
+
+### What a reviewer can and cannot close here
+
+- **Can:** whether a rule fires on its own planted positive · whether a draft trips a rule ·
+  whether the record contains a breach · whether a malformed line is refused rather than dropped.
+- **Cannot:** whether a `TEST` regex covers the ways a breach is *actually phrased*. This is the
+  known weak point and it is stated rather than hidden — a pattern is bound to a surface form, and
+  a sentence using a different tense, copula or synonym will sail through. Four such misses were
+  reported by an outside reviewer on 2026-10-20 and are not all fixed. Widening a regex to catch
+  the sentences someone happened to write buys nothing a fifth sentence would not take back.
+- **Cannot:** whether a law *should* exist. `prove` shows it can fire; it says nothing about
+  whether firing is right.
+
 ## Four verbs
 
 | verb | asks | fails when |
