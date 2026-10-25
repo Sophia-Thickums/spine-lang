@@ -698,6 +698,25 @@ def cmd_prove(laws_path, plants_path):
     are indistinguishable from a clean file, which is the exact defect prove exists to catch,
     one layer up. Refusing the parse is the only honest answer: a rule that is not in the
     denominator has not been proved, it has been dropped.
+
+    ★ A LAW THAT CAN ONLY FIRE IS ALSO BLIND, AND THE MIRROR HOLE WAS OPEN (found 2026-10-25).
+    The check above asks whether a pattern CAN fire. It never asked whether it can STOP. A law
+    written as `violation("A.01",".")` matched its own plant, reported `1/1 laws proved able to
+    fire`, exited 0 — and then fired on every sentence ever written, including fully compliant
+    ones. That is the same defect as a check that can only agree with you, seen from the other
+    side: a check that can only disagree carries no information either, and it trains its reader
+    to ignore the output. So a pattern must match its plant AND must not match a plain control
+    sentence. The control is not a plant; it is the silence the plant has to be distinguishable
+    from.
+
+    ★ AND A fails() LAW COULD NEVER BE PROVED AT ALL (found 2026-10-25). evaluate() has two
+    predicate kinds, but this verb only recognised `violation(...)` and `continue`d on anything
+    else, so EVERY bench-bound law reported BLIND and dragged the file red however well its check
+    worked — the exact law the evaluate() docstring says exists because a bench check is not
+    tested by matching prose. A fails() law is proved by its plant carrying the shape evaluate()
+    looks for: the check's own name on an event whose text starts with FAILED. Credit is given for
+    the clause being able to see that, with no control arm, because a failing bench check is
+    already the control — it is a verdict arrived at by something other than prose.
     """
     laws, errors = parse(Path(laws_path).read_text(encoding="utf-8"))
     if errors:
@@ -707,6 +726,8 @@ def cmd_prove(laws_path, plants_path):
             print(f"           · {e}")
         return 1
     plants = {p["law"]: p["text"] for p in json.loads(Path(plants_path).read_text(encoding="utf-8"))["plants"]}
+    control = ("This is an ordinary compliant sentence, written on an ordinary day, "
+               "saying nothing that any standing law forbids.")
     red, proved = 0, 0
     for law in laws:
         plant = plants.get(law["id"])
@@ -715,20 +736,41 @@ def cmd_prove(laws_path, plants_path):
             red += 1
             continue
         caught = False
+        blind_reason = ""
         for clause in law["test"]:
             m = re.match(r'violation\(\s*"([^"]*)"\s*,\s*"([^"]*)"', clause)
-            if not m:
+            if m:
+                pattern = m.group(2)
+                hit_plant = bool(re.search(pattern, plant, re.I))
+                hit_control = bool(re.search(pattern, control, re.I))
+                if hit_plant and not hit_control:
+                    caught = True
+                    break
+                if hit_plant and hit_control:
+                    blind_reason = ("the pattern matches EVERY sentence, including a compliant "
+                                    "control — it can fire but cannot tell a breach from prose")
+                    continue
+                # hit nothing in the plant; keep trying the other clauses
                 continue
-            if re.search(m.group(2), plant, re.I):
-                caught = True
-                break
+            mb = re.match(r'fails\(\s*"([^"]*)"\s*\)$', clause.strip())
+            if mb:
+                check = mb.group(1)
+                # evaluate() counts an event whose trigger is this check and whose text
+                # starts with FAILED. The plant must carry exactly that shape.
+                if plant.strip().startswith("FAILED") and check in plant:
+                    caught = True
+                    break
+                blind_reason = (f"fails(\"{check}\") is not exercised by its plant — the plant "
+                                f"must be 'FAILED <check> ...'")
+                continue
+            blind_reason = f"unimplemented predicate, cannot be proved: {clause[:50]}"
         if caught:
             proved += 1
             print(f"proved     §{law['id']:<12} catches: \"{plant[:60]}\"")
         else:
             red += 1
             print(f"BLIND      §{law['id']:<12} did NOT catch its own plant: \"{plant[:60]}\"")
-            print(f"                                  the pattern is narrower than the behaviour it names")
+            print(f"                                  {blind_reason or 'the pattern is narrower than the behaviour it names'}")
     print()
     print(f"{proved}/{len(laws)} laws proved able to fire.")
     return 1 if red else 0

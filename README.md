@@ -34,13 +34,15 @@ Clone it and run the suite. No install, no network, no dependencies beyond Pytho
 
 ```bash
 git clone https://github.com/Sophia-Thickums/spine-lang && cd spine-lang
-bash test_states.sh          # expect: 33 passed, 0 failed
+bash test_states.sh          # expect: 37 passed, 0 failed
 ```
 
 That runs every arm — a true claim that must pass, a frozen source that must go stale, a NaN
-deadline that must be refused, a malformed law that must not vanish from the denominator, and a
-planted failure that must be caught. Each arm asserts the verdict **and** the exit code, because
-either one alone passes a branch that refuses for the wrong reason.
+deadline that must be refused, a malformed law that must not vanish from the denominator, a
+planted failure that must be caught, and a pattern that matches *everything* being refused
+because a law that can fire on any sentence has not been proved, it has been hidden. Each arm
+asserts the verdict **and** the exit code, because either one alone passes a branch that refuses
+for the wrong reason.
 
 Then break it yourself — this is the part that is worth more than reading it:
 

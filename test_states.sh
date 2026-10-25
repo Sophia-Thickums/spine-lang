@@ -302,6 +302,69 @@ else
   printf 'FAIL  %-34s exit=%s (want 0 — a bench clause is not a draft clause)\n' "lint still skips a fails() clause" "$rc"; fail=$((fail+1))
 fi
 
+# (j) ★ A PATTERN THAT MATCHES EVERYTHING PROVES NOTHING (found 2026-10-25).
+#     prove only asked whether a pattern CAN fire, never whether it can STOP. A law written with
+#     the pattern "." matched its own plant, reported `1/1 laws proved able to fire`, and exited 0
+#     — then fired on every compliant sentence forever. A check that can only disagree carries no
+#     more information than one that can only agree, and it trains its reader to ignore the
+#     output. prove now also requires the pattern to leave a compliant control sentence silent.
+cat > "$T/matchall.spine" <<EOF
+§ALL.97 WHEN drafting DO check_result NOT claim_before_result COST 1021:synthetic TEST violation("ALL.97",".")
+EOF
+cat > "$T/matchall.json" <<EOF
+{"plants":[{"law":"ALL.97","text":"an entirely ordinary plant"}]}
+EOF
+out=$(python3 spine.py prove "$T/matchall.spine" "$T/matchall.json" 2>&1); rc=$?
+if [ "$rc" -eq 1 ] && printf '%s' "$out" | grep -q "BLIND"; then
+  printf 'PASS  %-34s BLIND (exit 1)\n' "prove rejects a match-everything pattern"; pass=$((pass+1))
+else
+  printf 'FAIL  %-34s exit=%s (want 1 + BLIND)\n' "prove rejects a match-everything pattern" "$rc"; fail=$((fail+1))
+fi
+
+# (k) the control arm for (j): a NARROW pattern must still prove. Without this, (j) could be
+#     satisfied by refusing every law, which would be the same defect wearing caution.
+cat > "$T/narrow.spine" <<EOF
+§NARROW.96 WHEN drafting DO check_result NOT claim_before_result COST 1021:synthetic TEST violation("NARROW.96","want me to")
+EOF
+cat > "$T/narrow.json" <<EOF
+{"plants":[{"law":"NARROW.96","text":"sure hon, want me to go ahead?"}]}
+EOF
+out=$(python3 spine.py prove "$T/narrow.spine" "$T/narrow.json" 2>&1); rc=$?
+if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q "1/1"; then
+  printf 'PASS  %-34s 1/1 (exit 0)\n' "prove still accepts a narrow pattern"; pass=$((pass+1))
+else
+  printf 'FAIL  %-34s exit=%s (want 0 + 1/1)\n' "prove still accepts a narrow pattern" "$rc"; fail=$((fail+1))
+fi
+
+# (l) ★ A BENCH-BOUND LAW MUST BE PROVABLE AT ALL (found 2026-10-25). evaluate() has two
+#     predicate kinds, but prove recognised only violation(...) and skipped the rest, so EVERY
+#     fails() law reported BLIND and dragged the file red however well its check worked — the exact
+#     law the evaluate() docstring says exists because a bench check is not tested by prose.
+cat > "$T/benchprov.spine" <<EOF
+§BENCH.95 WHEN drafting DO check_result NOT claim_before_result COST 1021:synthetic TEST fails("gpu_check")
+EOF
+cat > "$T/benchprov.json" <<EOF
+{"plants":[{"law":"BENCH.95","text":"FAILED gpu_check: card 1 missing"}]}
+EOF
+out=$(python3 spine.py prove "$T/benchprov.spine" "$T/benchprov.json" 2>&1); rc=$?
+if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q "1/1"; then
+  printf 'PASS  %-34s 1/1 (exit 0)\n' "prove credits a fails() law"; pass=$((pass+1))
+else
+  printf 'FAIL  %-34s exit=%s (want 0 + 1/1)\n' "prove credits a fails() law" "$rc"; fail=$((fail+1))
+fi
+
+# (m) the mirror control for (l): a fails() law whose plant does NOT carry the shape evaluate()
+#     looks for must still go BLIND. Otherwise (l) could be satisfied by crediting every clause.
+cat > "$T/benchbad.json" <<EOF
+{"plants":[{"law":"BENCH.95","text":"gpu_check passed fine"}]}
+EOF
+out=$(python3 spine.py prove "$T/benchprov.spine" "$T/benchbad.json" 2>&1); rc=$?
+if [ "$rc" -eq 1 ] && printf '%s' "$out" | grep -q "BLIND"; then
+  printf 'PASS  %-34s BLIND (exit 1)\n' "prove refuses a fails() law with no real plant"; pass=$((pass+1))
+else
+  printf 'FAIL  %-34s exit=%smode (want 1 + BLIND)\n' "prove refuses a fails() law with no real plant" "$rc"; fail=$((fail+1))
+fi
+
 echo
 echo "$pass passed, $fail failed"
 [ "$fail" -eq 0 ]
