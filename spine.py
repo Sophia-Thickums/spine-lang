@@ -157,13 +157,34 @@ def parse_obs(text):
         # and a source frozen since 2020 earns OK, with the check still nominally in place. Infinity is
         # the same defect wearing a number: an unbounded allowance. A duration must be finite and >= 0,
         # or the line is malformed rather than fresh.
-        if d.get("fresh") is not None and (d["fresh"] != d["fresh"] or d["fresh"] in (float("inf"), float("-inf"))):
+        # ★ AN ADMISSION RULE BELONGS TO THE KIND OF VALUE, NOT TO THE FIELD THAT REPORTED IT
+        # (deep-seeker, 2026-10-26). The FRESH nan/inf guard below was correct and FIELD-SHAPED: it
+        # validated FRESH because that is where nan bit. Meanwhile SCALE and TOL come through the
+        # same try block and were never checked at all — `SCALE 0` multiplies the source value to
+        # zero, so "claim 0 against a source reading 1000" returned OK; `TOL 0` is a band with no
+        # width on a row that claims `bounded`; `TOL 1e400` floats to inf and is the same unbounded
+        # allowance the FRESH guard exists to refuse. So: one validator per KIND, applied to every
+        # field of that kind at parse time, and a new field of an existing kind cannot reintroduce
+        # the class.
+        def _finite(v):
+            return v == v and v not in (float("inf"), float("-inf"))
+
+        if not _finite(d["scale"]) or d["scale"] == 0:
+            errors.append(f"line {n}: §OBS.{d['id']} SCALE {got.get('SCALE')!r} is not a usable factor — "
+                          f"it must be finite and non-zero, or the claim is multiplied out of existence "
+                          f"and every comparison against it silently passes")
+            continue
+        if not _finite(d["tol"]) or d["tol"] < 0:
+            errors.append(f"line {n}: §OBS.{d['id']} TOL {got.get('TOL')!r} is not a usable tolerance — "
+                          f"it must be finite and >= 0, or the band is unbounded and nothing can drift")
+            continue
+        if d["fresh"] is not None and (not _finite(d["fresh"]) or d["fresh"] < 0):
             errors.append(f"line {n}: §OBS.{d['id']} FRESH {got.get('FRESH')!r} is not a finite duration — "
                           f"nan/inf disables the source-age check while looking like a deadline")
             continue
-        if d.get("fresh") is not None and d["fresh"] < 0:
-            errors.append(f"line {n}: §OBS.{d['id']} FRESH is negative — a surface cannot be allowed to sit "
-                          f"unrewritten for less than no time")
+        if d["tol"] == 0 and d["unc"] == "bounded":
+            errors.append(f"line {n}: §OBS.{d['id']} UNC bounded with TOL 0 is a band with no width — "
+                          f"that is a point; say UNC exact")
             continue
         if d["unc"] not in UNC_VALUES:
             # ★ THE REFUSAL ITSELF CRASHED (outside review, 2026-10-22). `sorted('exact','bounded')` takes
@@ -290,12 +311,28 @@ def _age_seconds(seen):
     """
     from datetime import datetime, timezone
     s = seen.strip()
+    # ★ THE MOST STANDARD TIMESTAMP AN AGENT EMITS WAS THE ONE THIS PARSER REFUSED (deep-seeker,
+    # 2026-10-26). An RFC 3339 UTC stamp — 2026-10-26T00:00:00Z — failed all three formats and came
+    # back as "not a date or ISO timestamp". It failed CLOSED, so it was safe rather than silent,
+    # but a format nobody can write without knowing my parser is a format with a hidden dialect.
+    # A trailing Z (or +00:00) means UTC, which is the assumption the rest of this function already
+    # makes, so accepting it changes no arithmetic.
+    if s.endswith("Z") or s.endswith("z"):
+        s = s[:-1]
+    elif s.endswith("+00:00"):
+        s = s[:-6]
     for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
         try:
             dt = datetime.strptime(s, fmt)
         except ValueError:
             continue
-        now = datetime.now()
+        # ★ "NOW" IS UTC AND THE INHERITED TZ IS NOT IT (found 2026-10-26 while testing deep-seeker's
+        # SCALE finding). `datetime.now()` is NAIVE — it reads the system clock in whatever TZ the
+        # process inherited. Under a shell with TZ=America/Chicago every SEEN read 17,999 s in the
+        # FUTURE and was refused as clock skew, which looks exactly like a bad claim and is a bad
+        # instrument. A timestamp written without a zone is UTC by this format's own convention, so
+        # "now" must be UTC too. Every reading taken in a non-UTC shell was wrong by the offset.
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
         precise_age = (now - dt).total_seconds()   # the instant the caller actually wrote
         if fmt == "%Y-%m-%d":
             dt = dt.replace(hour=23, minute=59, second=59)  # a date is true through its last second

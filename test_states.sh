@@ -22,7 +22,12 @@ check () {           # check <label> <expected-verdict> <expected-exit> <file>
   fi
 }
 
-NOW=$(date +%Y-%m-%dT%H:%M:%S)
+# ★ THE FIXTURES SPEAK UTC BECAUSE THE CHECKER DOES (2026-10-26). `date` without -u prints LOCAL
+# time, so on a CDT box every fixture timestamp was five hours in the past and the whole suite read
+# STALE. That was invisible while the checker also used naive local now — two wrongs agreeing. The
+# moment `observe` was pinned to UTC the fixtures became the thing that was wrong, which is the
+# correct direction for that error to fall.
+NOW=$(date -u +%Y-%m-%dT%H:%M:%S)
 TMPF="$T/surface"; echo 42 > "$TMPF"; : > "$T/empty"
 
 # 0. the honest arm: a true claim passes. If THIS does not pass, the other arms prove nothing.
@@ -183,7 +188,8 @@ import pathlib, sys, subprocess
 T = pathlib.Path(sys.argv[1])
 up = open("/proc/uptime").read().split()[0]
 (T / "volok.spine").write_text(
-    f"§OBS.V2 WHEN test IS proc.uptime = {up} SRC /proc/uptime FIELD 1 UNC bounded TOL 60 SEEN {__import__('time').strftime('%Y-%m-%dT%H:%M:%S')}\n")
+    "§OBS.V2 WHEN test IS proc.uptime = {} SRC /proc/uptime FIELD 1 UNC bounded TOL 60 SEEN {}\n".format(
+        up, __import__("datetime").datetime.now(__import__("datetime").timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")))
 PY2
 check "true claim on a moving surface (banded) -> OK" "OK" 0 "$T/volok.spine"
 
@@ -487,6 +493,54 @@ if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q "1/1"; then
   printf 'PASS  %-34s 1/1 (exit 0)\n' "a clean single-clause law still proves"; pass=$((pass+1))
 else
   printf 'FAIL  %-34s exit=%s (want 0 + 1/1)\n' "a clean single-clause law still proves" "$rc"; fail=$((fail+1))
+fi
+
+# (s) ★ THE ADMISSION RULE BELONGS TO THE VALUE'S KIND, NOT TO THE FIELD THAT REPORTED IT
+#     (deep-seeker, 2026-10-26). The FRESH nan/inf guard was field-shaped; SCALE and TOL came
+#     through the same parse and were checked for nothing. `SCALE 0` multiplied the source value to
+#     zero, so a claim of 0 against a source reading 1000 returned OK. Each of these must refuse,
+#     and each needs its working control in the SAME block — otherwise the repair is "refuse
+#     numbers", which would break every honest row.
+SURF="$T/surf.txt"
+printf '1000\n' > "$SURF"
+NOW=$(python3 -c "from datetime import datetime,timezone;print(datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S'))")
+obs_arm() {   # name, expected-verdict, claim, unc, extra
+  printf '§OBS.S1 WHEN host IS disk = %s SRC %s UNC %s SEEN %s FRESH 86400%s\n' "$3" "$SURF" "$4" "$NOW" "$5" > "$T/o.spine"
+  out=$(python3 spine.py observe "$T/o.spine" 2>&1); rc=$?
+  if printf '%s' "$out" | grep -q "^$2"; then
+    printf 'PASS  %-34s %s\n' "$1" "$2"; pass=$((pass+1))
+  else
+    printf 'FAIL  %-34s got: %s\n' "$1" "$(printf '%s' "$out" | head -1 | cut -c1-70)"; fail=$((fail+1))
+  fi
+}
+obs_arm "SCALE 0 is refused"            "MALFORMED" 0      exact   " SCALE 0"
+obs_arm "TOL 0 on a bounded band is refused" "MALFORMED" 1000 bounded " TOL 0"
+obs_arm "TOL inf is refused"            "MALFORMED" 999999 bounded " TOL 1e400"
+obs_arm "negative TOL is refused"       "MALFORMED" 1000 bounded " TOL -1"
+obs_arm "control: honest row is OK"     "OK"        1000   exact   ""
+obs_arm "control: a real drift is DRIFT" "DRIFT"     999999 exact   ""
+obs_arm "control: bounded TOL 1 is OK"  "OK"        1000   bounded " TOL 1"
+
+# (t) ★ AN RFC 3339 UTC TIMESTAMP MUST PARSE (deep-seeker, 2026-10-26). It failed closed, so it
+#     was safe — but the most standard stamp an agent emits was the one the parser refused.
+printf '§OBS.S1 WHEN host IS disk = 1000 SRC %s UNC exact SEEN %sZ FRESH 86400\n' "$SURF" "$NOW" > "$T/z.spine"
+out=$(python3 spine.py observe "$T/z.spine" 2>&1)
+if ! printf '%s' "$out" | grep -q "not a date or ISO timestamp"; then
+  printf 'PASS  %-34s RFC3339 Z accepted\n' "Z timestamp parses"; pass=$((pass+1))
+else
+  printf 'FAIL  %-34s refused\n' "Z timestamp parses"; fail=$((fail+1))
+fi
+
+# (u) ★ "NOW" IS UTC AND THE INHERITED TZ IS NOT IT (found 2026-10-26 while testing (s)).
+#     `datetime.now()` is naive: under TZ=America/Chicago every SEEN read ~18 000 s in the future
+#     and was refused as clock skew. The same row must read the SAME verdict in two zones.
+printf '§OBS.S1 WHEN host IS disk = 1000 SRC %s UNC exact SEEN %s FRESH 86400\n' "$SURF" "$NOW" > "$T/tz.spine"
+a=$(TZ=UTC python3 spine.py observe "$T/tz.spine" 2>&1 | head -1 | awk '{print $1}')
+b=$(TZ=America/Chicago python3 spine.py observe "$T/tz.spine" 2>&1 | head -1 | awk '{print $1}')
+if [ "$a" = "$b" ] && [ "$a" = "OK" ]; then
+  printf 'PASS  %-34s UTC and Chicago agree (%s)\n' "observe is timezone-independent" "$a"; pass=$((pass+1))
+else
+  printf 'FAIL  %-34s UTC=%s Chicago=%s\n' "observe is timezone-independent" "$a" "$b"; fail=$((fail+1))
 fi
 
 echo
