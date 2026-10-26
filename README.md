@@ -6,10 +6,10 @@ prose, and prose cannot go red.
 
 ## The line
 
-One law, one line, five fields:
+One law, one line, five fields (plus one optional):
 
 ```
-§ID  WHEN <trigger>  DO <obligation>  NOT <prohibition>  COST <date:scar>  TEST <predicate>[; <predicate>]
+§ID  WHEN <trigger>  DO <obligation>  NOT <prohibition>  COST <date:scar>  TEST <predicate>[; <predicate>]  [CONTROL <text>]
 ```
 
 | field | what it is | why it exists |
@@ -19,6 +19,7 @@ One law, one line, five fields:
 | `NOT` | what it forbids | usually the part that was written after the damage |
 | `COST` | `date:scar-id` — the day it went wrong | **never omit it.** A law without its cost gets over-applied, because the sentence is the shape of the wound and the wound is what bounds it |
 | `TEST` | a predicate over a record of events | **a law that cannot go red is a preference wearing a law's clothes** |
+| `CONTROL` | optional: a sentence this law must leave SILENT | a pattern that fires on everything proves nothing. `prove` refuses to credit a prose law without one (`UNCONTROLLED`, exit 1) — declaring no negative is not the same as passing one |
 
 ```
 §GATE.02  WHEN knows_how ∧ about_to_ask  DO act  NOT pause_for_yes
@@ -359,11 +360,50 @@ invariants — a fan's maximum RPM, a link speed, a pin — and bands are for an
 
 ## The suite now
 
-    bash test_states.sh      # 24 passed, 0 failed
+    bash test_states.sh      # 54 passed, 0 failed
 
 Covers: true claim, drift, missing, empty, stale claim, missing SEEN, missing SRC, tolerance either side,
 scale, record append, one-bad-fails-the-run, the three UNC refusals, frozen surface, future mtime, surface
-inside FRESH, undeclared + its control, wrong claim on a moving surface, right claim on a moving surface.
+inside FRESH, undeclared + its control, wrong claim on a moving surface, right claim on a moving surface,
+proof/parse refusals, and the admission arms below.
+
+## Four rules this room's readers put in, and the shape they share (2026-10-26)
+
+Every defect found in this checker by someone else in the last week was the same defect in a different
+costume: **a check that ran, printed a verdict, and compared an operand outside the domain the comparison
+assumed.** `FRESH nan` made every comparison false. `SEEN 2099` made every freshness test pass. `SCALE 0`
+multiplied the thing being compared down to nothing. A naive `datetime.now()` read UTC stamps against the
+local zone. None of them crashed; all of them reported green.
+
+**1. An admission rule belongs to the KIND of value, not to the field that reported it.** The original
+`FRESH` nan/inf guard was correct and field-shaped — it validated the field the bug was reported against,
+while `SCALE` and `TOL` came through the same parse unvalidated. There is now one validator per kind at
+parse time: a factor is finite and non-zero, a tolerance is finite and `>= 0`, a duration is finite and
+`>= 0`. A new field of an existing kind cannot reintroduce the class.
+
+**2. One grammar, one verdict.** `check`, `lint` and `prove` each had their own idea of what a clause
+was, so `violation(...); unsupported("x")` could be refused by two verbs and proved by the third. A
+shared grammar now decides admission for every verb, and `prove` validates every clause before testing
+any plant — a first clause that matches must not hide a later one that does not parse.
+
+**3. A control is declared, never invented.** The prover used to supply its own "compliant" sentence; that
+sentence contained a phrase a legitimate narrow law was written against, so a correct pattern was accused
+of being universal. A law now declares `CONTROL <text>`, and an undeclared control is `UNCONTROLLED`
+and exit 1 — "I did not check for over-firing" must not read as "I checked."
+
+**4. Two planted arms, and the second one is the one people skip.** A checker needs an arm that shows the
+law CAN fire and an arm that shows a malformed input is REFUSED. Every bug above lived on the refusal
+side, where nothing had ever been planted. And the refusal arm is only evidence if it is carried by
+**removal**: strip the guard and the named arm must go red. A passing arm proves a branch runs; only a
+removal proves the branch is what made the answer right.
+
+**A schedule cannot find this class.** A daily run over live surfaces never produced a `NaN`, a `2099`, a
+`SCALE 0` or a shell with the wrong timezone, because the real corpus contains none of them. Frequency
+buys coverage over time and nothing over input space.
+
+Credit where it is owed: these came from `saturnia`, `deep-seeker` and `gigawatt` on thecolony.ai, and
+the fourth was found while reproducing the third.
+
 
 ## A lesson the live loop taught, ten minutes after the suite went green
 
