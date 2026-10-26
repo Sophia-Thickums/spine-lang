@@ -54,6 +54,28 @@ FIELD_RE = re.compile(
     r"(?:\s+CONTROL\s+(?P<control>.+))?$"
 )
 
+# ★ ONE COMPLETE PREDICATE GRAMMAR FOR EVERY VERB (saturnia, 2026-10-25, adopted 2026-10-26).
+# Recognising two arguments is not the same as recognising a clause. A truncated call, or a valid
+# prefix followed by junk, is not a clause — and because each verb had its OWN matcher, the three
+# verbs disagreed about whether such a line was a clause at all: `prove` reported 1/1 exit 0 over
+# `violation(...); unsupported("x")` while `lint` and `check` both refused it. Three matchers meant
+# three opinions, and the one that ran unattended decided what "verified" meant.
+VIOLATION_RE = re.compile(
+    r'violation\(\s*"([^"]*)"\s*,\s*"([^"]*)"\s*(?:,\s*when\s*=\s*"([^"]*)")?\s*\)'
+)
+FAILS_RE = re.compile(r'fails\(\s*"([^"]*)"\s*\)')
+
+
+def clause_kind(clause):
+    """'prose' | 'bench' | None for one TEST clause. THE single admission rule."""
+    c = clause.strip()
+    if VIOLATION_RE.fullmatch(c):
+        return "prose"
+    if FAILS_RE.fullmatch(c):
+        return "bench"
+    return None
+
+
 # §OBS.<id>  WHEN <scope>  IS <subject> = <value>  SRC <file>  UNC <...>  SEEN <date> [TOL <n>]
 OBS_RE = re.compile(
     r"^§OBS\.(?P<id>\S+)\s+"
@@ -567,7 +589,7 @@ def evaluate(clause, events):
     The second kind exists because a law bound to a bench check is not tested by matching prose —
     it is tested by the check's own verdict, which no one argued it into.
     """
-    m = re.match(r'violation\(\s*"([^"]*)"\s*,\s*"([^"]*)"\s*(?:,\s*when\s*=\s*"([^"]*)")?\s*\)$', clause)
+    m = VIOLATION_RE.fullmatch(clause.strip())
     if m:
         law_id, pattern, when = m.groups()
         # ★ ONE MATCHER, ONE CASE RULE (saturnia, 2026-10-21; reintroduced by me 2026-10-26).
@@ -585,7 +607,7 @@ def evaluate(clause, events):
             and (not when or when in e.get("trigger", ""))
         ]
         return len(hits), None
-    m = re.match(r'fails\(\s*"([^"]*)"\s*\)$', clause)
+    m = FAILS_RE.fullmatch(clause.strip())
     if m:
         check = m.group(1)
         hits = [
@@ -673,7 +695,7 @@ def cmd_lint(laws_path, text_path):
         red += 1
     for law in laws:
         for clause in law["test"]:
-            m = re.match(r'violation\(\s*"([^"]*)"\s*,\s*"([^"]*)"', clause)
+            m = VIOLATION_RE.fullmatch(clause.strip())
             if not m:
                 # ★ A fails() clause is about a bench check, not about a draft — that is a
                 # legitimate skip. But ANYTHING ELSE is a clause nobody implemented, and the
@@ -681,7 +703,7 @@ def cmd_lint(laws_path, text_path):
                 # `TEST unsupported("x")` linted clean and exited 0 while `check` refused the
                 # same clause loudly. An unimplemented predicate is not a passing one
                 # (found by an outside reviewer, 2026-10-21). Say so and go red.
-                if not re.match(r'fails\(\s*"[^"]*"\s*\)$', clause.strip()):
+                if FAILS_RE.fullmatch(clause.strip()) is None:
                     red += 1
                     print(f"UNKNOWN   §{law['id']:<12} lint cannot evaluate: {clause[:70]}")
                     print(f"          a clause lint does not understand is not a clause this draft passed")
@@ -761,8 +783,16 @@ def cmd_prove(laws_path, plants_path):
     demands a hit from that — one implementation, one verdict, no second opinion.
     """
     laws, errors = parse(Path(laws_path).read_text(encoding="utf-8"))
+    # ★ VALIDATE EVERY CLAUSE BEFORE ANY PLANT IS TESTED (saturnia, 2026-10-25). A first clause
+    # that matches its plant used to short-circuit the loop, hiding an unsupported LATER clause —
+    # so `violation(...); unsupported("x")` proved 1/1 exit 0 while lint and check both refused
+    # it. Admission is now decided for the whole law file, before a single ratio can be printed.
+    for law in laws:
+        for clause in law["test"]:
+            if clause_kind(clause) is None:
+                errors.append(f"§{law['id']}: unsupported predicate: {clause[:60]}")
     if errors:
-        print(f"MALFORMED  {laws_path} — {len(errors)} line(s) could not be parsed, so this file's")
+        print(f"MALFORMED  {laws_path} — {len(errors)} parse/predicate error(s), so this file's")
         print("           denominator is not the file you wrote. Refusing to report a ratio.")
         for e in errors:
             print(f"           · {e}")
@@ -784,7 +814,7 @@ def cmd_prove(laws_path, plants_path):
         blind_reason = ""
         kind = "prose"          # what the credit actually rests on, printed with the receipt
         for clause in law["test"]:
-            m = re.match(r'violation\(\s*"([^"]*)"\s*,\s*"([^"]*)"', clause)
+            m = VIOLATION_RE.fullmatch(clause.strip())
             if m:
                 pattern = m.group(2)
                 control = (law.get("control") or "").strip()
@@ -810,7 +840,7 @@ def cmd_prove(laws_path, plants_path):
                 caught = True
                 kind = "prose+control"
                 break
-            mb = re.match(r'fails\(\s*"([^"]*)"\s*\)$', clause.strip())
+            mb = FAILS_RE.fullmatch(clause.strip())
             if mb:
                 check = mb.group(1)
                 # ★ THE PLANT'S OWN TRIGGER IS THE THING THAT DECIDES — NOT THE CHECK'S NAME

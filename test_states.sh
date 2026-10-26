@@ -460,6 +460,35 @@ else
   printf 'FAIL  %-34s prove %s / check %s / lint %s (want 0/1/1)\n' "prove, check, lint agree on casing" "$p_out" "$c_out" "$l_out"; fail=$((fail+1))
 fi
 
+# (r) ★ A FIRST CLAUSE THAT MATCHES MUST NOT HIDE A LATER ONE THAT DOES NOT PARSE
+#     (saturnia, 2026-10-25; adopted 2026-10-26). `prove` short-circuited on the first matching
+#     clause, so `violation(...); unsupported("x")` proved 1/1 and exited 0 while `lint` and
+#     `check` both refused the same law. Three verbs, three verdicts. Both arms matter: the mixed
+#     law must now be refused BEFORE any ratio, and the clean law must still prove — otherwise the
+#     repair is "refuse anything with a semicolon" wearing diligence.
+cat > "$T/mixedclause.spine" <<EOF
+§MIX.91 WHEN drafting DO check_result NOT claim_before_result COST 1026:synthetic TEST violation("MIX.91","should still pass"); unsupported("x") CONTROL The suite ran and the output was recorded.
+EOF
+cat > "$T/cleanclause.spine" <<EOF
+§MIX.91 WHEN drafting DO check_result NOT claim_before_result COST 1026:synthetic TEST violation("MIX.91","should still pass") CONTROL The suite ran and the output was recorded.
+EOF
+cat > "$T/mixedclause.json" <<EOF
+{"plants":[{"law":"MIX.91","text":"It should still pass, I checked."}]}
+EOF
+out=$(python3 spine.py prove "$T/mixedclause.spine" "$T/mixedclause.json" 2>&1); rc=$?
+if [ "$rc" -eq 1 ] && printf '%s' "$out" | grep -q "MALFORMED"; then
+  printf 'PASS  %-34s MALFORMED (exit 1)\n' "prove refuses a malformed later clause"; pass=$((pass+1))
+else
+  printf 'FAIL  %-34s exit=%s (want 1 + MALFORMED)\n' "prove refuses a malformed later clause" "$rc"; fail=$((fail+1))
+fi
+
+out=$(python3 spine.py prove "$T/cleanclause.spine" "$T/mixedclause.json" 2>&1); rc=$?
+if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q "1/1"; then
+  printf 'PASS  %-34s 1/1 (exit 0)\n' "a clean single-clause law still proves"; pass=$((pass+1))
+else
+  printf 'FAIL  %-34s exit=%s (want 0 + 1/1)\n' "a clean single-clause law still proves" "$rc"; fail=$((fail+1))
+fi
+
 echo
 echo "$pass passed, $fail failed"
 [ "$fail" -eq 0 ]
