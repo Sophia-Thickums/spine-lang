@@ -50,7 +50,8 @@ FIELD_RE = re.compile(
     r"DO\s+(?P<do>.+?)\s+"
     r"NOT\s+(?P<not>.+?)\s+"
     r"COST\s+(?P<cost>\S+)\s+"
-    r"TEST\s+(?P<test>.+)$"
+    r"TEST\s+(?P<test>.+?)"
+    r"(?:\s+CONTROL\s+(?P<control>.+))?$"
 )
 
 # §OBS.<id>  WHEN <scope>  IS <subject> = <value>  SRC <file>  UNC <...>  SEEN <date> [TOL <n>]
@@ -524,6 +525,17 @@ def cmd_observe(argv):
 
 
 
+def _plant_event(plant):
+    """Split a plant into (trigger, text). A bench plant must SAY which check it arrived on —
+    "trigger=disk_check text=FAILED disk_check: gpu_check passed" — because the trigger is the
+    relation the law is about, and a prover that infers it is a prover that can credit the wrong
+    check. Returns (None, plant) when the plant does not label itself."""
+    m = re.match(r'^\s*trigger=(\S+)\s+text=(.*)$', plant, re.S)
+    if m:
+        return m.group(1), m.group(2)
+    return None, plant
+
+
 def parse(text):
     """Return (laws, errors). A law without COST or TEST is a malformed law, never a soft one."""
     laws, errors = [], []
@@ -558,10 +570,18 @@ def evaluate(clause, events):
     m = re.match(r'violation\(\s*"([^"]*)"\s*,\s*"([^"]*)"\s*(?:,\s*when\s*=\s*"([^"]*)")?\s*\)$', clause)
     if m:
         law_id, pattern, when = m.groups()
+        # ★ ONE MATCHER, ONE CASE RULE (saturnia, 2026-10-21; reintroduced by me 2026-10-26).
+        # `lint` and `prove` have always matched case-insensitively at the DRAFT level, because a
+        # draft sentence may start a clause with a capital. This function did not, so the same
+        # pattern was red in `lint` and quiet in `check` for any sentence beginning with the word
+        # the pattern was about — and when `prove` was changed to call this function it silently
+        # lost the flag and the public example fell from 4/4 to 2/4. The rule now lives in one
+        # place: prose is matched case-insensitively everywhere, and `prove`/`check`/`lint` cannot
+        # disagree about a sentence again.
         hits = [
             e for e in events
             if e.get("law") == law_id
-            and re.search(pattern, e.get("text", ""))
+            and re.search(pattern, e.get("text", ""), re.I)
             and (not when or when in e.get("trigger", ""))
         ]
         return len(hits), None
@@ -717,6 +737,28 @@ def cmd_prove(laws_path, plants_path):
     looks for: the check's own name on an event whose text starts with FAILED. Credit is given for
     the clause being able to see that, with no control arm, because a failing bench check is
     already the control — it is a verdict arrived at by something other than prose.
+
+    ★ AND THE FIRST fixes FOR BOTH WERE THEMSELVES THE DEFECT THEY CURED (saturnia, 2026-10-26).
+    Two findings, both reproduced on the tree before a line was changed:
+
+    (1) THE CONTROL WAS ONE FIXED SENTENCE AND NOBODY HAD JUSTIFIED THAT IT WAS COMPLIANT.
+    The control read "...saying nothing that any standing law forbids." A law written against
+    exactly that claim (a rule forbidding blanket compliance assertions) matched its own plant
+    AND the control, so the prover called it BLIND and printed "matches EVERY sentence" — a
+    false accusation, because `lint` showed the pattern is narrow and quiet on neutral prose.
+    A control is not evidence that a pattern is universal; it is evidence that the pattern
+    matched ONE sentence. So the control is now PER LAW, declared in the law file itself
+    (`control "..."`), and a law with neither a declared control nor a bench plant is reported
+    UNCONTROLLED rather than silently credited. A universal pattern is caught by the DECLARED
+    control matching, not by a sentence the prover happened to own.
+
+    (2) A SUBSTRING IN ANOTHER CHECK'S FAILURE PROVED THE WRONG LAW. `fails("gpu_check")` was
+    credited whenever the plant started with FAILED and merely CONTAINED "gpu_check" — so
+    "FAILED disk_check: gpu_check passed" proved a law that `check` (which requires the
+    trigger to BE gpu_check) correctly leaves green. The prover agreed for a reason other than
+    the one it named, which is the whole subject of this file. So the prover now runs the SAME
+    evaluator `check` runs, over an event built from the plant and its declared trigger, and
+    demands a hit from that — one implementation, one verdict, no second opinion.
     """
     laws, errors = parse(Path(laws_path).read_text(encoding="utf-8"))
     if errors:
@@ -726,8 +768,11 @@ def cmd_prove(laws_path, plants_path):
             print(f"           · {e}")
         return 1
     plants = {p["law"]: p["text"] for p in json.loads(Path(plants_path).read_text(encoding="utf-8"))["plants"]}
-    control = ("This is an ordinary compliant sentence, written on an ordinary day, "
-               "saying nothing that any standing law forbids.")
+    # ★ THE CONTROL IS PER LAW AND MUST BE DECLARED (saturnia, 2026-10-26). There is no default
+    # sentence: a prover that supplies its own compliant control has decided, silently, what
+    # compliance looks like — and the first version's choice contained the exact phrase a
+    # legitimate narrow law was written against, so the prover accused a correct pattern of being
+    # universal. A law declares what must NOT fire, or it says it has no such case.
     red, proved = 0, 0
     for law in laws:
         plant = plants.get(law["id"])
@@ -737,36 +782,65 @@ def cmd_prove(laws_path, plants_path):
             continue
         caught = False
         blind_reason = ""
+        kind = "prose"          # what the credit actually rests on, printed with the receipt
         for clause in law["test"]:
             m = re.match(r'violation\(\s*"([^"]*)"\s*,\s*"([^"]*)"', clause)
             if m:
                 pattern = m.group(2)
-                hit_plant = bool(re.search(pattern, plant, re.I))
-                hit_control = bool(re.search(pattern, control, re.I))
-                if hit_plant and not hit_control:
-                    caught = True
-                    break
-                if hit_plant and hit_control:
-                    blind_reason = ("the pattern matches EVERY sentence, including a compliant "
-                                    "control — it can fire but cannot tell a breach from prose")
+                control = (law.get("control") or "").strip()
+                # One event, one law id, exactly as check() would see it.
+                plant_events = [{"law": law["id"], "trigger": "plant", "text": plant}]
+                hits, _ = evaluate(clause, plant_events)
+                hit_plant = bool(hits)
+                if not hit_plant:
+                    blind_reason = "the pattern is narrower than the behaviour it names"
                     continue
-                # hit nothing in the plant; keep trying the other clauses
-                continue
+                if not control:
+                    print(f"UNCONTROLLED §{law['id']:<11} caught its plant, but no CONTROL is declared —")
+                    print(f"                                  a pattern that fires on everything would also pass this")
+                    red += 1
+                    caught = "uncontrolled"
+                    break
+                control_events = [{"law": law["id"], "trigger": "control", "text": control}]
+                chits, _ = evaluate(clause, control_events)
+                if chits:
+                    blind_reason = ("the pattern matches its DECLARED control — it can fire but cannot "
+                                    "tell a breach from prose")
+                    continue
+                caught = True
+                kind = "prose+control"
+                break
             mb = re.match(r'fails\(\s*"([^"]*)"\s*\)$', clause.strip())
             if mb:
                 check = mb.group(1)
-                # evaluate() counts an event whose trigger is this check and whose text
-                # starts with FAILED. The plant must carry exactly that shape.
-                if plant.strip().startswith("FAILED") and check in plant:
+                # ★ THE PLANT'S OWN TRIGGER IS THE THING THAT DECIDES — NOT THE CHECK'S NAME
+                # (saturnia, 2026-10-26, and my first fix got this wrong in the same way).
+                # The first version credited a plant on "starts with FAILED and contains the
+                # check name", so "FAILED disk_check: gpu_check passed" proved a fails("gpu_check")
+                # law that check() correctly leaves green. My first repair hard-wired the trigger
+                # to the check name, which made that plant pass anyway — I had moved the
+                # assumption rather than removed it. Now the plant declares the trigger it arrived
+                # on ("trigger=disk_check") and the SAME evaluator check() uses is asked whether
+                # that event fires this law. An unlabelled plant is refused, not guessed.
+                trigger, ptext = _plant_event(plant)
+                if trigger is None:
+                    blind_reason = (f"fails(\"{check}\") — the plant names no trigger, so which check "
+                                    f"failed is unstated; write 'trigger={check} text=FAILED {check}: ...'")
+                    continue
+                hits, _ = evaluate(clause, [{"law": law["id"], "trigger": trigger, "text": ptext}])
+                if hits:
                     caught = True
+                    kind = f"bench/evaluate trig={trigger}"
                     break
-                blind_reason = (f"fails(\"{check}\") is not exercised by its plant — the plant "
-                                f"must be 'FAILED <check> ...'")
+                blind_reason = (f"fails(\"{check}\") is not exercised by its plant — the plant fired on "
+                                f"trigger {trigger!r}, which is not that check")
                 continue
             blind_reason = f"unimplemented predicate, cannot be proved: {clause[:50]}"
-        if caught:
+        if caught is True:
             proved += 1
-            print(f"proved     §{law['id']:<12} catches: \"{plant[:60]}\"")
+            print(f"proved     §{law['id']:<12} catches: \"{plant[:52]}\"  [{kind}]")
+        elif caught == "uncontrolled":
+            pass
         else:
             red += 1
             print(f"BLIND      §{law['id']:<12} did NOT catch its own plant: \"{plant[:60]}\"")

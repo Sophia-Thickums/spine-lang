@@ -309,7 +309,7 @@ fi
 #     more information than one that can only agree, and it trains its reader to ignore the
 #     output. prove now also requires the pattern to leave a compliant control sentence silent.
 cat > "$T/matchall.spine" <<EOF
-§ALL.97 WHEN drafting DO check_result NOT claim_before_result COST 1021:synthetic TEST violation("ALL.97",".")
+§ALL.97 WHEN drafting DO check_result NOT claim_before_result COST 1021:synthetic TEST violation("ALL.97",".") CONTROL an ordinary compliant sentence
 EOF
 cat > "$T/matchall.json" <<EOF
 {"plants":[{"law":"ALL.97","text":"an entirely ordinary plant"}]}
@@ -324,7 +324,7 @@ fi
 # (k) the control arm for (j): a NARROW pattern must still prove. Without this, (j) could be
 #     satisfied by refusing every law, which would be the same defect wearing caution.
 cat > "$T/narrow.spine" <<EOF
-§NARROW.96 WHEN drafting DO check_result NOT claim_before_result COST 1021:synthetic TEST violation("NARROW.96","want me to")
+§NARROW.96 WHEN drafting DO check_result NOT claim_before_result COST 1021:synthetic TEST violation("NARROW.96","want me to") CONTROL The suite ran and the result was recorded.
 EOF
 cat > "$T/narrow.json" <<EOF
 {"plants":[{"law":"NARROW.96","text":"sure hon, want me to go ahead?"}]}
@@ -344,7 +344,7 @@ cat > "$T/benchprov.spine" <<EOF
 §BENCH.95 WHEN drafting DO check_result NOT claim_before_result COST 1021:synthetic TEST fails("gpu_check")
 EOF
 cat > "$T/benchprov.json" <<EOF
-{"plants":[{"law":"BENCH.95","text":"FAILED gpu_check: card 1 missing"}]}
+{"plants":[{"law":"BENCH.95","text":"trigger=gpu_check text=FAILED gpu_check: card 1 missing"}]}
 EOF
 out=$(python3 spine.py prove "$T/benchprov.spine" "$T/benchprov.json" 2>&1); rc=$?
 if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q "1/1"; then
@@ -363,6 +363,101 @@ if [ "$rc" -eq 1 ] && printf '%s' "$out" | grep -q "BLIND"; then
   printf 'PASS  %-34s BLIND (exit 1)\n' "prove refuses a fails() law with no real plant"; pass=$((pass+1))
 else
   printf 'FAIL  %-34s exit=%smode (want 1 + BLIND)\n' "prove refuses a fails() law with no real plant" "$rc"; fail=$((fail+1))
+fi
+
+# (n) ★ THE CONTROL SENTENCE WAS ONE THE PROVER INVENTED, AND IT WAS NOT NEUTRAL
+#     (saturnia, 2026-10-26). The old control read "...saying nothing that any standing law
+#     forbids" — so a law written against exactly that claim matched its own plant AND the
+#     control, and prove called a correct narrow pattern "matches EVERY sentence". Two arms:
+#     the same law must PROVE against a genuinely neutral declared control, and must go BLIND
+#     against a declared control that does carry the phrase — otherwise a universal pattern
+#     would slip through the new shape.
+cat > "$T/blanket.spine" <<EOF
+§CONTROL.90 WHEN drafting DO check_result NOT claim_blanket_compliance COST 1026:synthetic TEST violation("CONTROL.90","nothing that any standing law forbids") CONTROL The draft has not been assessed.
+EOF
+cat > "$T/blanket.json" <<EOF
+{"plants":[{"law":"CONTROL.90","text":"This message says nothing that any standing law forbids."}]}
+EOF
+out=$(python3 spine.py prove "$T/blanket.spine" "$T/blanket.json" 2>&1); rc=$?
+if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q "1/1"; then
+  printf 'PASS  %-34s 1/1 (exit 0)\n' "a narrow law proves on a neutral control"; pass=$((pass+1))
+else
+  printf 'FAIL  %-34s exit=%s (want 0 + 1/1)\n' "a narrow law proves on a neutral control" "$rc"; fail=$((fail+1))
+fi
+
+cat > "$T/blanketbad.spine" <<EOF
+§CONTROL.90 WHEN drafting DO check_result NOT claim_blanket_compliance COST 1026:synthetic TEST violation("CONTROL.90","nothing that any standing law forbids") CONTROL This message says nothing that any standing law forbids.
+EOF
+out=$(python3 spine.py prove "$T/blanketbad.spine" "$T/blanket.json" 2>&1); rc=$?
+if [ "$rc" -eq 1 ] && printf '%s' "$out" | grep -q "BLIND"; then
+  printf 'PASS  %-34s BLIND (exit 1)\n' "prove rejects a control the pattern matches"; pass=$((pass+1))
+else
+  printf 'FAIL  %-34s exit=%s (want 1 + BLIND)\n' "prove rejects a control the pattern matches" "$rc"; fail=$((fail+1))
+fi
+
+# (o) ★ AND NO CONTROL AT ALL MUST NOT BE CREDITED (saturnia, 2026-10-26). Without this arm the
+#     fix for (n) is satisfied by "declare a control or don't, either is fine", which is the old
+#     silent default wearing a new sentence.
+cat > "$T/nocontrol.spine" <<EOF
+§NOC.94 WHEN drafting DO check_result NOT claim_before_result COST 1026:synthetic TEST violation("NOC.94","want me to")
+EOF
+cat > "$T/nocontrol.json" <<EOF
+{"plants":[{"law":"NOC.94","text":"sure hon, want me to go ahead?"}]}
+EOF
+out=$(python3 spine.py prove "$T/nocontrol.spine" "$T/nocontrol.json" 2>&1); rc=$?
+if [ "$rc" -eq 1 ] && printf '%s' "$out" | grep -q "UNCONTROLLED"; then
+  printf 'PASS  %-34s UNCONTROLLED (exit 1)\n' "prove refuses an undeclared control"; pass=$((pass+1))
+else
+  printf 'FAIL  %-34s exit=%s (want 1 + UNCONTROLLED)\n' "prove refuses an undeclared control" "$rc"; fail=$((fail+1))
+fi
+
+# (p) ★ A SUBSTRING IN ANOTHER CHECK'S FAILURE IS NOT THAT CHECK'S VERDICT (saturnia, 2026-10-26).
+#     "FAILED disk_check: gpu_check passed" used to prove fails("gpu_check") while check() left the
+#     law green. BOTH arms matter: the unlabelled plant must go BLIND (the trigger is unstated, so
+#     it cannot be assumed), and a plant that LABELS the wrong trigger must go BLIND too — that
+#     second arm is the one my own first fix failed.
+cat > "$T/wrongtrig.json" <<EOF
+{"plants":[{"law":"BENCH.95","text":"FAILED disk_check: gpu_check passed"}]}
+EOF
+out=$(python3 spine.py prove "$T/benchprov.spine" "$T/wrongtrig.json" 2>&1); rc=$?
+if [ "$rc" -eq 1 ] && printf '%s' "$out" | grep -q "BLIND"; then
+  printf 'PASS  %-34s BLIND (exit 1)\n' "prove refuses an unlabelled bench plant"; pass=$((pass+1))
+else
+  printf 'FAIL  %-34s exit=%s (want 1 + BLIND)\n' "prove refuses an unlabelled bench plant" "$rc"; fail=$((fail+1))
+fi
+
+cat > "$T/wrongtrig2.json" <<EOF
+{"plants":[{"law":"BENCH.95","text":"trigger=disk_check text=FAILED disk_check: gpu_check passed"}]}
+EOF
+out=$(python3 spine.py prove "$T/benchprov.spine" "$T/wrongtrig2.json" 2>&1); rc=$?
+if [ "$rc" -eq 1 ] && printf '%s' "$out" | grep -q "BLIND"; then
+  printf 'PASS  %-34s BLIND (exit 1)\n' "prove refuses a mislabelled trigger"; pass=$((pass+1))
+else
+  printf 'FAIL  %-34s exit=%s (want 1 + BLIND)\n' "prove refuses a mislabelled trigger" "$rc"; fail=$((fail+1))
+fi
+
+# (q) ★ ONE MATCHER, ONE CASE RULE (saturnia reported the split 2026-10-21; I reintroduced it
+#     2026-10-26 by routing prove through evaluate()). The same pattern must give the same verdict
+#     on the same sentence from `lint`, `check` and `prove` — otherwise the three verbs are three
+#     opinions, and the one that runs in a cron decides what "verified" means. The sentence here
+#     begins with a capital, which is exactly the case the old case-sensitive path missed.
+cat > "$T/case.spine" <<EOF
+§CASE.93 WHEN drafting DO check_result NOT claim_before_result COST 1026:synthetic TEST violation("CASE.93","(i|i have)\s+(posted|sent)") CONTROL The draft describes an intention.
+EOF
+cat > "$T/case.plant.json" <<EOF
+{"plants":[{"law":"CASE.93","text":"I have posted the correction."}]}
+EOF
+cat > "$T/case.events.json" <<EOF
+[{"law":"CASE.93","trigger":"draft","text":"I have posted the correction."}]
+EOF
+printf 'I have posted the correction.' > "$T/case.txt"
+p_out=$(python3 spine.py prove "$T/case.spine" "$T/case.plant.json" >/dev/null 2>&1; echo $?)
+c_out=$(python3 spine.py check "$T/case.spine" "$T/case.events.json" >/dev/null 2>&1; echo $?)
+l_out=$(python3 spine.py lint "$T/case.spine" "$T/case.txt" >/dev/null 2>&1; echo $?)
+if [ "$p_out" -eq 0 ] && [ "$c_out" -eq 1 ] && [ "$l_out" -eq 1 ]; then
+  printf 'PASS  %-34s prove 0 / check 1 / lint 1\n' "prove, check, lint agree on casing"; pass=$((pass+1))
+else
+  printf 'FAIL  %-34s prove %s / check %s / lint %s (want 0/1/1)\n' "prove, check, lint agree on casing" "$p_out" "$c_out" "$l_out"; fail=$((fail+1))
 fi
 
 echo
