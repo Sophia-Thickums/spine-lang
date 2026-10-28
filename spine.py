@@ -585,10 +585,12 @@ def cmd_observe(argv):
 
 
 def _plant_event(plant):
-    """Split a plant into (trigger, text). A bench plant must SAY which check it arrived on —
-    "trigger=disk_check text=FAILED disk_check: gpu_check passed" — because the trigger is the
-    relation the law is about, and a prover that infers it is a prover that can credit the wrong
-    check. Returns (None, plant) when the plant does not label itself."""
+    """Split an explicitly labelled example into (trigger, text).
+
+    Bench plants and scoped prose positives/controls must name their actual trigger.
+    Returns (None, plant) when the example does not label itself; the caller decides
+    whether an unlabelled example is meaningful for its predicate kind.
+    """
     m = re.match(r'^\s*trigger=(\S+)\s+text=(.*)$', plant, re.S)
     if m:
         return m.group(1), m.group(2)
@@ -745,7 +747,7 @@ def cmd_lint(laws_path, text_path):
                     print(f"UNKNOWN   §{law['id']:<12} lint cannot evaluate: {clause[:70]}")
                     print(f"          a clause lint does not understand is not a clause this draft passed")
                 continue
-            _, pattern = m.groups()
+            _, pattern, _ = m.groups()
             hit = re.search(pattern, text, re.I)
             if hit:
                 red += 1
@@ -853,10 +855,20 @@ def cmd_prove(laws_path, plants_path):
         for clause in law["test"]:
             m = VIOLATION_RE.fullmatch(clause.strip())
             if m:
-                pattern = m.group(2)
+                when = m.group(3)
                 control = (law.get("control") or "").strip()
+                # Scope is part of the example, not something prove may invent from
+                # the predicate. Keep legacy unscoped text literal; scoped examples
+                # use the existing trigger=... text=... event notation.
+                plant_trigger, plant_text = "plant", plant
+                if when:
+                    plant_trigger, plant_text = _plant_event(plant)
+                    if plant_trigger is None:
+                        blind_reason = ("scoped prose plant names no trigger — declare "
+                                        "'trigger=<actual-context> text=<violating text>'")
+                        continue
                 # One event, one law id, exactly as check() would see it.
-                plant_events = [{"law": law["id"], "trigger": "plant", "text": plant}]
+                plant_events = [{"law": law["id"], "trigger": plant_trigger, "text": plant_text}]
                 hits, _ = evaluate(clause, plant_events)
                 hit_plant = bool(hits)
                 if not hit_plant:
@@ -868,7 +880,18 @@ def cmd_prove(laws_path, plants_path):
                     red += 1
                     caught = "uncontrolled"
                     break
-                control_events = [{"law": law["id"], "trigger": "control", "text": control}]
+                control_trigger, control_text = "control", control
+                if when:
+                    control_trigger, control_text = _plant_event(control)
+                    if control_trigger is None:
+                        blind_reason = ("scoped prose CONTROL names no trigger — declare "
+                                        "'trigger=<actual-context> text=<compliant text>'")
+                        continue
+                    if when not in control_trigger:
+                        blind_reason = ("the DECLARED control is outside the predicate's scope — "
+                                        "silence there does not test in-scope text discrimination")
+                        continue
+                control_events = [{"law": law["id"], "trigger": control_trigger, "text": control_text}]
                 chits, _ = evaluate(clause, control_events)
                 if chits:
                     blind_reason = ("the pattern matches its DECLARED control — it can fire but cannot "

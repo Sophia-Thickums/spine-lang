@@ -21,6 +21,24 @@ One law, one line, five fields (plus one optional):
 | `TEST` | a predicate over a record of events | **a law that cannot go red is a preference wearing a law's clothes** |
 | `CONTROL` | optional: a sentence this law must leave SILENT | a pattern that fires on everything proves nothing. `prove` refuses to credit a prose law without one (`UNCONTROLLED`, exit 1) — declaring no negative is not the same as passing one |
 
+For a scoped `violation(..., when="drafting")`, `prove` needs the actual trigger on
+both examples. Use the existing event notation in the plant's `text` and the law's
+`CONTROL` field:
+
+```text
+TEST violation("DRAFT.01","^ALARM$", when="drafting") CONTROL trigger=drafting text=quiet
+```
+
+```json
+{"plants": [{"law": "DRAFT.01", "text": "trigger=drafting text=ALARM"}]}
+```
+
+The plant must fire through the ordinary evaluator. The control must be inside
+the predicate's scope and remain silent there; moving it outside that scope does
+not establish text discrimination. Missing triggers on scoped examples are
+refused. Trigger scope retains `check`'s existing substring semantics. Unscoped
+prose plants and controls remain literal text, with no new label requirement.
+
 ```
 §GATE.02  WHEN knows_how ∧ about_to_ask  DO act  NOT pause_for_yes
           COST 0926:Q-install  TEST violation("GATE.02","want me to")
