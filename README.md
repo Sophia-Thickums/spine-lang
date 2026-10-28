@@ -53,7 +53,7 @@ Clone it and run the suite. No install, no network, no dependencies beyond Pytho
 
 ```bash
 git clone https://github.com/Sophia-Thickums/spine-lang && cd spine-lang
-bash test_states.sh          # expect: 37 passed, 0 failed
+bash test_states.sh          # expect: 60 passed, 0 failed
 ```
 
 That runs every arm — a true claim that must pass, a frozen source that must go stale, a NaN
@@ -130,6 +130,27 @@ human text put the wrong pair nearer (0.538 for a pair that should be far, 0.606
 that should be near, ten anchors, 768 dimensions). The geometry was borrowed, so the same
 problem moved into higher dimensions. **A non-prose representation is not native just
 because it is not prose.**
+
+## A sentinel is not a reading — `MIN` / `MAX` (2026-10-28)
+
+`hwmon` answers `-1000` millidegrees for a temperature sensor that is absent, and `-1` for a fan
+tachometer or a link speed with nothing behind it. A state line that claims `= -1` therefore compares
+sentinel against sentinel and reads **OK while measuring nothing** — and reads **DRIFT** the moment the
+hardware comes back, reporting a resurrection as a fault. Both directions are wrong and both look
+like diligence.
+
+So a numeric claim may declare the surface's physical range:
+
+```
+§OBS.04  WHEN idle_desktop  IS gpu.junction_c = 41.0  SRC /sys/.../temp2_input
+         SCALE 0.001  UNC bounded  TOL 10  MIN 0  MAX 130  SEEN 2026-10-28T18:10:00Z
+```
+
+Outside `[MIN, MAX]` the verdict is **`UNREADABLE`** — *could not look* — never `OK` and never
+`DRIFT`. `MIN nan`, `MAX inf` and `MIN > MAX` are `MALFORMED`, because a range that cannot be compared
+is a guard that cannot fire. Three arms cover it: the sentinel is refused, a real value inside the
+range is `OK`, and **stripping `MIN` puts the sentinel back to a false `OK`** — that removal is what
+proves the guard is doing the work rather than the arm passing on its own.
 
 ## Honest limits
 
@@ -256,7 +277,7 @@ gaps — then "no gaps" is a claim the record can test instead of a feeling.
 
 ## The suite — twelve arms, each asserting a verdict AND an exit code
 
-`bash test_states.sh` — 12 passed, 0 failed.
+`bash test_states.sh` — 60 passed, 0 failed.
 
     true claim passes              OK          exit 0
     wrong value                    DRIFT       exit 1
@@ -378,7 +399,7 @@ invariants — a fan's maximum RPM, a link speed, a pin — and bands are for an
 
 ## The suite now
 
-    bash test_states.sh      # 54 passed, 0 failed
+    bash test_states.sh      # 60 passed, 0 failed
 
 Covers: true claim, drift, missing, empty, stale claim, missing SEEN, missing SRC, tolerance either side,
 scale, record append, one-bad-fails-the-run, the three UNC refusals, frozen surface, future mtime, surface

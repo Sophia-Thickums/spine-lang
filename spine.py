@@ -105,8 +105,8 @@ def parse_obs(text):
     """
     states, errors = [], []
     head = re.compile(r"^§OBS\.(?P<id>\S+)\s+WHEN\s+(?P<when>.+?)\s+IS\s+(?P<rest>.+)$")
-    marker = re.compile(r"\s+(?=(?:SRC|UNC|SEEN|SCALE|TOL|FRESH|FIELD|SUBJECT|AS-OF)\s)")
-    fields = {"SRC", "UNC", "SEEN", "SCALE", "TOL", "FRESH", "FIELD", "SUBJECT", "AS-OF"}
+    marker = re.compile(r"\s+(?=(?:SRC|UNC|SEEN|SCALE|TOL|MIN|MAX|FRESH|FIELD|SUBJECT|AS-OF)\s)")
+    fields = {"SRC", "UNC", "SEEN", "SCALE", "TOL", "MIN", "MAX", "FRESH", "FIELD", "SUBJECT", "AS-OF"}
 
     for n, raw in enumerate(text.splitlines(), 1):
         line = raw.strip()
@@ -141,6 +141,21 @@ def parse_obs(text):
         try:
             d["scale"] = float(got["SCALE"]) if "SCALE" in got else 1.0
             d["tol"] = float(got["TOL"]) if "TOL" in got else 0.0
+            # ★ MIN/MAX declare the surface's PHYSICAL RANGE, and their whole job is to make a sentinel
+            # impossible to mistake for a reading. They belong to the KIND "a number that must be inside a
+            # range", so they are validated the same way SCALE and TOL are — finite, and MIN <= MAX — rather
+            # than being trusted as text. A range with nan on either end compares false in both directions
+            # and would silently disable the guard it exists to provide, which is the same defect class as
+            # `FRESH nan` and `SCALE 0` already recorded above.
+            d["min"] = float(got["MIN"]) if "MIN" in got else None
+            d["max"] = float(got["MAX"]) if "MAX" in got else None
+            for _k in ("min", "max"):
+                _v = d[_k]
+                if _v is not None and (_v != _v or _v in (float("inf"), float("-inf"))):
+                    errors.append(f"line {n}: §OBS.{d['id']} {_k.upper()} {got[_k.upper()]!r} is not a finite number — "
+                                  f"a range that cannot be compared is a guard that cannot fire")
+            if d["min"] is not None and d["max"] is not None and d["min"] > d["max"]:
+                errors.append(f"line {n}: §OBS.{d['id']} MIN {d['min']:g} > MAX {d['max']:g} — an empty range admits nothing")
             d["fresh"] = float(got["FRESH"]) if "FRESH" in got else None
             # ★ EXTRACTION WAS UNSPECIFIED (outside review, 2026-10-21) and it bites on the very first real
             # surface: /proc/uptime holds two numbers, /proc/loadavg holds five. FIELD selects a
@@ -436,12 +451,39 @@ def observe_one(st, stale_after):
     def agrees(obs):
         av, bv = _as_num(st["value_raw"]), _as_num(obs)
         if av is not None and bv is not None:
-            return abs(av - bv * st.get("scale", 1.0)) <= st["tol"], bv * st.get("scale", 1.0)
+            scaled = bv * st.get("scale", 1.0)
+            # ★ A SENTINEL IS NOT A READING, AND A CLAIM THAT EQUALS ONE IS GREEN WHILE BLIND (2026-10-28).
+            # Measured on this box: hwmon reports `temp2_input = -1000` (i.e. -1 °C) and `fan1_input = -1`
+            # when the sensor is ABSENT, and the state line said `IS gpu.mi25.junction_c = -1`. The compare
+            # was sentinel-vs-sentinel, so it read OK for six days while measuring nothing — and the moment
+            # the card came back it would have read DRIFT against a claim asserting the absence.
+            # The fix is not a special case for one line: a numeric claim and its observation must both fall
+            # inside the surface's DECLARED physical range. Outside it, the surface is not reporting a value
+            # and there is nothing to compare, so the verdict is UNREADABLE — never OK, and never DRIFT (a
+            # drift would say the world moved, when the truth is that nobody looked).
+            lo, hi = st.get("min"), st.get("max")
+            if lo is not None and scaled < lo:
+                return False, scaled
+            if hi is not None and scaled > hi:
+                return False, scaled
+            return abs(av - scaled) <= st["tol"], scaled
         return _norm(st["value_raw"]).casefold() == _norm(obs).casefold(), None
 
     agree, scaled = agrees(observed)
     if scaled is not None:
         rec["observed_scaled"] = round(scaled, 6)
+
+    # ★ OUT OF THE DECLARED RANGE IS "COULD NOT LOOK", NOT "THE WORLD MOVED" (2026-10-28).
+    # This has to be decided BEFORE the retry loop, because a retry cannot help: a sentinel is stable.
+    # Reading it three times and calling it DRIFT would report a dead sensor as a change in the world,
+    # which is the same inversion as the empty-user-unit probe that told two readers a guard did not exist.
+    lo, hi = st.get("min"), st.get("max")
+    if scaled is not None and ((lo is not None and scaled < lo) or (hi is not None and scaled > hi)):
+        rec["verdict"] = "UNREADABLE"
+        rec["why"] = (f"the surface reported {scaled:g}, outside its declared range "
+                      f"[{lo if lo is not None else '-inf'}, {hi if hi is not None else 'inf'}] — a sentinel, "
+                      f"not a reading; there is nothing here to compare a claim against")
+        return rec
 
     # ★ RETRY, DO NOT INVENT A "FLAKY" VERDICT (outside review, 2026-10-21). The first version reported
     # FLAKY whenever two reads disagreed — which is wrong twice over: a legitimately moving surface
