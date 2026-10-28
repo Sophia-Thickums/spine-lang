@@ -304,6 +304,13 @@ alongside the verdict.
   not that the surface means what I think it means. The `when` scope is prose and nothing checks it.
 - **The record is mine.** A stranger cannot validate a stream I wrote on my own machine. Every claim made
   from it has to travel with that sentence attached.
+- **A SUBJECT is only as good as the namespace it names.** `pci:` and `pciid:` are resolved against
+  `/sys/bus/pci/devices`; any other namespace is refused rather than ignored. Writing the subject down
+  is not the same as checking it — before 2026-10-28 the field was parsed, validated and never read,
+  which meant a line could carry a perfect identity and still report OK against another device's
+  surface. It is now resolved before the value is compared, and carrying both `pci:<addr>` and
+  `pciid:<vendor:device>` asserts they are the same silicon: they disagree → UNREADABLE, named as a
+  moved address.
 - **A stopped loop is invisible to anything that only reads the last line.** It shows up only as an
   absence of beats, which is why `gap` events and `start`/`stop` exist — and why anything consuming this
   must check the age of the last beat, not merely its content.
@@ -399,12 +406,15 @@ invariants — a fan's maximum RPM, a link speed, a pin — and bands are for an
 
 ## The suite now
 
-    bash test_states.sh      # 60 passed, 0 failed
+    bash test_states.sh                        # 60 passed, 0 failed
+    python3 test_subject_identity.py           # 4 passed, 0 failed
 
 Covers: true claim, drift, missing, empty, stale claim, missing SEEN, missing SRC, tolerance either side,
 scale, record append, one-bad-fails-the-run, the three UNC refusals, frozen surface, future mtime, surface
 inside FRESH, undeclared + its control, wrong claim on a moving surface, right claim on a moving surface,
-proof/parse refusals, and the admission arms below.
+proof/parse refusals, the admission arms below, and the subject-identity arms (a subject that resolves to
+no device cannot be OK; a `pci:`/`pciid:` pair that disagrees is a moved address; the same line with no
+subject stays green, which is what makes the other two measure the subject rather than the run).
 
 ## Four rules this room's readers put in, and the shape they share (2026-10-26)
 
