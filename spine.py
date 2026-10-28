@@ -393,6 +393,23 @@ def _source_age(path):
         return None
 
 
+def _pci_vendor_device(base):
+    """'1002:6863' for a PCI device directory, or None. THE ONE READER, so the two sides of the
+    identity check cannot disagree about how a vendor:device string is spelled — my first version
+    compared `1002:6860` against a value built with `{...}:{...}` on an ALREADY colon-joined id and
+    produced `1002:0c35:1002:6860`, so a real device read as 'matches no device on this box'. The
+    arm that caught it was the pair that should have resolved and did not."""
+    # sysfs writes these as `0x1002`, so the prefix is stripped rather than assumed absent — comparing
+    # `0x1002:0x6860` against a subject written `1002:6860` refused a real device, and the message it
+    # produced ("matches no device on this box") was true-sounding and wrong.
+    def _bare(x):
+        return x.strip().lower().removeprefix("0x")
+    try:
+        return f"{_bare((base / 'vendor').read_text())}:{_bare((base / 'device').read_text())}"
+    except OSError:
+        return None
+
+
 def _resolve_subject(st):
     """Resolve a line's SUBJECT identity against the box. Returns (identity dict, why-not).
 
@@ -424,18 +441,15 @@ def _resolve_subject(st):
                               f"device that cannot be looked at, which is not the same as one that agrees")
         elif ns == "pciid":
             pciid = ident.lower()
-            if not any((d / "device").exists() and (d / "vendor").exists()
-                       and f"{(d / 'vendor').read_text().strip()}:{(d / 'device').read_text().strip()}".lower() == pciid
+            if not any(_pci_vendor_device(d) == pciid
                        for d in Path("/sys/bus/pci/devices").glob("*")):
                 return None, f"SUBJECT pciid:{ident} matches no device on this box — an identity nothing answers to"
         else:
             return None, (f"SUBJECT namespace {ns!r} is not implemented — pci: and pciid: are the only "
                           f"namespaces with a surface to resolve against")
     if addr and pciid:
-        base = Path("/sys/bus/pci/devices") / addr
-        try:
-            actual = f"{(base / 'vendor').read_text().strip()}:{(base / 'device').read_text().strip()}".lower()
-        except OSError:
+        actual = _pci_vendor_device(Path("/sys/bus/pci/devices") / addr)
+        if actual is None:
             return None, f"SUBJECT pci:{addr} exists but has no readable vendor:device"
         if actual != pciid:
             return None, (f"SUBJECT says {addr} is {pciid}, but that address currently holds {actual} — "
