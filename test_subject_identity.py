@@ -94,11 +94,11 @@ def _real_pci_pair():
     """A real (bus address, vendor:device) pair from this box, or None when there is no PCI at all."""
     for d in sorted(PCI_DEV_ROOT.glob("0000:*")):
         try:
-            dev = (d / "device").read_text().strip()
-            ven = (d / "vendor").read_text().strip()
+            dev = (d / "device").read_text().strip().removeprefix("0x")
+            ven = (d / "vendor").read_text().strip().removeprefix("0x")
         except OSError:
             continue
-        return d.name, f"{ven}:{dev}"
+        return d.name, f"{ven}:{dev}".lower()
     return None
 
 
