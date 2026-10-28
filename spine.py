@@ -120,12 +120,15 @@ def parse_obs(text):
         parts = marker.split(d.pop("rest"))
         claim = parts[0].strip()
         got = {}
+        subs = []          # every SUBJECT on the line, in order — a claim when there is more than one
         for part in parts[1:]:
             k, _, v = part.strip().partition(" ")
             k = k.upper()
             if k not in fields:
                 errors.append(f"line {n}: §OBS.{d['id']} has unknown field {k!r}")
                 continue
+            if k == "SUBJECT":
+                subs.append(v.strip())
             got[k] = v.strip()
         c = CLAIM_RE.match(claim)
         if not c:
@@ -236,6 +239,11 @@ def parse_obs(text):
                 errors.append(f"line {n}: §OBS.{d['id']} SUBJECT must be '<namespace>:<identity>' "
                               f"(e.g. pci:0000:03:00.0), got {d['subject_id']!r}")
                 continue
+        # ★ SEVERAL SUBJECTS ARE A CLAIM, NOT A REPETITION (2026-10-28). `SUBJECT pci:0000:12:00.0
+        # SUBJECT pciid:1002:6863` says those two names are the same silicon, and that is the
+        # sentence that goes red when firmware renumbers the bus. A repeated SUBJECT key used to
+        # overwrite the first silently, so the stronger claim was unrepresentable.
+        d["subjects"] = subs
         if d["as_of"] and not re.match(r"^\d{4}-\d{2}-\d{2}$", d["as_of"]):
             errors.append(f"line {n}: §OBS.{d['id']} AS-OF must be a date (YYYY-MM-DD), got {d['as_of']!r}")
             continue
@@ -385,6 +393,56 @@ def _source_age(path):
         return None
 
 
+def _resolve_subject(st):
+    """Resolve a line's SUBJECT identity against the box. Returns (identity dict, why-not).
+
+    ★ A SUBJECT THAT IS PARSED, VALIDATED AND NEVER READ IS DECORATION (found 2026-10-28 by reading
+    §OBS.02 back). The field exists because hwmon numbers move at probe time and the same path string
+    named one GPU yesterday and another today. But `observe_one` never looked at it, so a line could
+    carry a perfect subject, read the WRONG object's surface, and return OK — the identity was
+    written down and had no effect on any verdict.
+    ★ AND AN ADDRESS IS A NAME, NOT AN IDENTITY (same day, from the house's own history: reserving a
+    64 GB MMIO window moved two cards by one bus each). The memory ladder is index < bus address <
+    device id, because the bus address is a FIRMWARE assignment and vendor:device is the silicon.
+    So a subject may name both — `pci:0000:03:00.0` and `pciid:1002:6860` — and carrying both is a
+    claim that they are the same device. That claim is the one that can go red when the box
+    renumbers, which is the whole reason SUBJECT exists.
+    """
+    subs = st.get("subjects") or []
+    if not subs:
+        return None, None                     # no identity claimed, nothing to resolve
+    addr = pciid = None
+    for raw in subs:
+        ns, _, ident = raw.partition(":")
+        ns = ns.strip().lower()
+        ident = ident.strip()
+        if ns == "pci":
+            addr = ident.lower()
+            path = Path("/sys/bus/pci/devices") / addr
+            if not path.is_dir():
+                return None, (f"SUBJECT pci:{ident} does not exist on this box — the claim names a "
+                              f"device that cannot be looked at, which is not the same as one that agrees")
+        elif ns == "pciid":
+            pciid = ident.lower()
+            if not any((d / "device").exists() and (d / "vendor").exists()
+                       and f"{(d / 'vendor').read_text().strip()}:{(d / 'device').read_text().strip()}".lower() == pciid
+                       for d in Path("/sys/bus/pci/devices").glob("*")):
+                return None, f"SUBJECT pciid:{ident} matches no device on this box — an identity nothing answers to"
+        else:
+            return None, (f"SUBJECT namespace {ns!r} is not implemented — pci: and pciid: are the only "
+                          f"namespaces with a surface to resolve against")
+    if addr and pciid:
+        base = Path("/sys/bus/pci/devices") / addr
+        try:
+            actual = f"{(base / 'vendor').read_text().strip()}:{(base / 'device').read_text().strip()}".lower()
+        except OSError:
+            return None, f"SUBJECT pci:{addr} exists but has no readable vendor:device"
+        if actual != pciid:
+            return None, (f"SUBJECT says {addr} is {pciid}, but that address currently holds {actual} — "
+                          f"the address has MOVED, so the value underneath it belongs to another device")
+    return {"pci": addr, "pciid": pciid}, None
+
+
 def observe_one(st, stale_after):
     """One state line, re-checked against its own source. Returns a dict; 'verdict' is the answer."""
     age, age_err, precise_age = _age_seconds(st["seen"])
@@ -396,8 +454,19 @@ def observe_one(st, stale_after):
         "observed": observed, "src": st["src"], "unc": st["unc"], "seen": st["seen"],
         "age_s": None if age is None else round(age),
     }
+    identity, ident_why = _resolve_subject(st)
+    if identity:
+        rec["identity"] = identity
     if age_err:
         rec["verdict"], rec["why"] = "MALFORMED", age_err
+        return rec
+    # ★ AFTER ADMISSIBILITY, BEFORE ANY COMPARISON (2026-10-28). Order matters: a claim that is
+    # malformed is malformed whatever device it is about, and a future SEEN is refused before it can
+    # make a freshness test pass. But an identity that cannot be resolved is decided before the value
+    # is ever compared, because agreeing with the wrong object's surface is the failure this field
+    # exists to catch and a retry loop would only read the same wrong thing twice more.
+    if ident_why:
+        rec["verdict"], rec["why"] = "UNREADABLE", ident_why
         return rec
     # ★ A SEEN THAT HAS NOT HAPPENED YET IS NOT FRESH, IT IS UNREADABLE (found by saturnia, 2026-10-21,
     # verified here). `_age_seconds` returns a NEGATIVE age for a future timestamp, and `age > stale_after`
