@@ -543,6 +543,53 @@ else
   printf 'FAIL  %-34s UTC=%s Chicago=%s\n' "observe is timezone-independent" "$a" "$b"; fail=$((fail+1))
 fi
 
+# (v) ★ A SENTINEL IS NOT A READING (found 2026-10-28, measured on this box). hwmon reports
+#     temp2_input = -1000 (i.e. -1 °C) and net/.../speed = -1 when the sensor or the link is ABSENT.
+#     A state line that claimed `= -1` compared sentinel-vs-sentinel and read OK for six days while
+#     measuring nothing — and would have read DRIFT the moment the card came back, reporting a
+#     resurrection as a fault. MIN/MAX declare the surface's physical range; outside it the verdict is
+#     UNREADABLE (could not look), never OK and never DRIFT.
+printf -- '-1000\n' > "$T/sent"
+printf '§OBS.S1 WHEN host IS j = -1 SRC %s SCALE 0.001 UNC bounded TOL 10 MIN 0 MAX 130 SEEN %s FRESH 86400\n' "$T/sent" "$NOW" > "$T/sent.spine"
+out=$(python3 spine.py observe "$T/sent.spine" 2>&1); rc=$?
+if printf '%s' "$out" | grep -q UNREADABLE && [ "$rc" = 1 ]; then
+  printf 'PASS  %-34s UNREADABLE (exit %s)\n' "a sentinel claim is refused" "$rc"; pass=$((pass+1))
+else
+  printf 'FAIL  %-34s wanted UNREADABLE/1, got exit %s:\n%s\n' "a sentinel claim is refused" "$rc" "$out"; fail=$((fail+1))
+fi
+
+# (w) ★ THE CONTROL FOR (v): the same surface with a REAL value inside the range must be OK.
+#     Without this arm, (v) would pass for a checker that simply refuses everything.
+printf -- '33000\n' > "$T/real"
+printf '§OBS.S1 WHEN host IS j = 33 SRC %s SCALE 0.001 UNC bounded TOL 10 MIN 0 MAX 130 SEEN %s FRESH 86400\n' "$T/real" "$NOW" > "$T/real.spine"
+out=$(python3 spine.py observe "$T/real.spine" 2>&1); rc=$?
+if printf '%s' "$out" | grep -q '^OK' && [ "$rc" = 0 ]; then
+  printf 'PASS  %-34s OK (exit %s)\n' "a real value inside the range" "$rc"; pass=$((pass+1))
+else
+  printf 'FAIL  %-34s wanted OK/0, got exit %s:\n%s\n' "a real value inside the range" "$rc" "$out"; fail=$((fail+1))
+fi
+
+# (x) ★ REMOVAL ARM FOR (v): strip MIN and the SAME sentinel must go back to reading OK.
+#     A passing arm proves a branch runs; only REMOVAL proves that branch is what made the answer right.
+sed 's/ MIN 0 MAX 130//' "$T/sent.spine" > "$T/sent_nomin.spine"
+out=$(python3 spine.py observe "$T/sent_nomin.spine" 2>&1)
+if printf '%s' "$out" | grep -q '^OK'; then
+  printf 'PASS  %-34s OK without MIN (removal proves it)\n' "MIN is what refuses the sentinel"; pass=$((pass+1))
+else
+  printf 'FAIL  %-34s expected the unguarded line to read OK, got:\n%s\n' "MIN is what refuses the sentinel" "$out"; fail=$((fail+1))
+fi
+
+# (y) ★ A RANGE THAT CANNOT BE COMPARED IS A GUARD THAT CANNOT FIRE — nan/inf/empty must be refused.
+for spec in "MIN nan" "MAX inf" "MIN 120 MAX 0"; do
+  printf '§OBS.S1 WHEN host IS j = 33 SRC %s SCALE 0.001 UNC bounded TOL 10 %s SEEN %s FRESH 86400\n' "$T/real" "$spec" "$NOW" > "$T/badrange.spine"
+  out=$(python3 spine.py observe "$T/badrange.spine" 2>&1); rc=$?
+  if printf '%s' "$out" | grep -q MALFORMED && [ "$rc" = 1 ]; then
+    printf 'PASS  %-34s MALFORMED (exit %s)\n' "range '$spec' is refused" "$rc"; pass=$((pass+1))
+  else
+    printf 'FAIL  %-34s wanted MALFORMED/1, got exit %s:\n%s\n' "range '$spec' is refused" "$rc" "$out"; fail=$((fail+1))
+  fi
+done
+
 echo
 echo "$pass passed, $fail failed"
 [ "$fail" -eq 0 ]

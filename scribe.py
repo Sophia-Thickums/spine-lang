@@ -20,6 +20,7 @@ which is the honest verdict and not a stale pass.
     python3 scribe.py --print    # show what would be written, write nothing
 """
 import argparse
+import glob
 import os
 import subprocess
 import sys
@@ -59,6 +60,22 @@ def facts():
             for tok in unit.split():
                 if tok.startswith("GGML_VK_VISIBLE_DEVICES="):
                     pin = tok.split("=", 1)[1]
+    # ★ THE THIRD DOOR, AND THE ONE THE PIN ACTUALLY WENT THROUGH (2026-10-28). `systemctl show -p Environment`
+    # lists the env this unit was CONFIGURED with, and it does NOT include an `EnvironmentFile=`, so the pin
+    # the drop-in derives at ExecStartPre went missing from both of the first two places and the claim came
+    # back `ollama.pin: no surface available` — a STALE line that reads like "ollama is not running" when the
+    # truth was "the scribe could not look". `/proc/<pid>/environ` is root-only for another user's process, so
+    # the only readable surface is the generated file itself. It is world-readable (0644, owned by ollama), so
+    # this is a read any stranger could make, not a privilege escalation.
+    if pin is None:
+        pinned = Path("/run/ollama/vk-pin.env")
+        try:
+            for line in pinned.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if line.startswith("GGML_VK_VISIBLE_DEVICES="):
+                    pin = line.split("=", 1)[1].strip()
+        except OSError:
+            pass
     out.append(("ollama.pin", pin))
 
     # ★ FACTS ABOUT ME, not about the video cards. These are the surfaces that would show a self degrading:
@@ -104,8 +121,16 @@ def main():
         # instant as its raw reading, and the READER (a different process, later) compares it against the
         # live surface. It cannot be circular, because the reader is not the writer and time has passed —
         # and a scribe that dies shows up as SOURCE-STALE the moment its claims stop being refreshed.
-        import time as _t
-        now = _t.strftime("%Y-%m-%dT%H:%M:%S")
+        import time as _t, datetime as _dt
+        # ★ THIS STAMP WAS LOCAL AND THE READER IS UTC, so every scribe claim read ~18,000 s old and came
+        # back STALE the moment it was written (measured 2026-10-28: a 1,125-beat stream where not one beat
+        # ever had zero STALE). `spine.py`'s `_age_seconds` documents the convention in its own words —
+        # "a timestamp written without a zone is UTC by this format's own convention" — so the WRITER was the
+        # side that broke it. The two processes disagreed for six days and neither crashed: the reader
+        # reported a truthful STALE about a clock, not about the world, and the stream filled with red.
+        # Written as an explicit UTC stamp WITH the Z, because the Z is the one notation that cannot be
+        # re-read in another zone by a later tool.
+        now = _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         lines = []
         if a.surfaces:
             for raw in Path(a.surfaces).read_text(encoding="utf-8").splitlines():
@@ -115,6 +140,24 @@ def main():
                 parts = [x.strip() for x in raw.split("|")]
                 sid, subject, path = parts[0], parts[1], parts[2]
                 extra = " ".join(x for x in parts[3:] if x)
+                # ★ A WILDCARD PATH WAS NEVER RESOLVED, SO EVERY SURFACE CLAIM SILENTLY SKIPPED (2026-10-28).
+                # `surfaces.txt` deliberately wildcards the hwmon index — `.../hwmon/hwmon*/temp1_input` — because
+                # hwmonN is an order the kernel assigns at probe time and reassigns later. That wildcard is the
+                # whole point of the file's own header. But `Path(path).read_text()` took the asterisk LITERALLY,
+                # the open failed with ENOENT, and the except branch reported it as "unreadable — no claim is
+                # better than a guessed one". So the honest-looking refusal was a bug, and it hid itself: the
+                # message is exactly what a careful scribe SHOULD say about a dead surface.
+                # Resolution keeps the file's own rule: zero matches or more than one is a BLIND sense and must
+                # fail, never pick one. That refusal is real; the previous one was accidental.
+                matches = sorted(glob.glob(path))
+                if "*" in path:
+                    if len(matches) == 0:
+                        print(f"skip    {sid}: {path} the pattern matches no node (a renamed or absent surface is a blind sense)")
+                        continue
+                    if len(matches) > 1:
+                        print(f"skip    {sid}: {path} the pattern matches {len(matches)} nodes, ambiguous — refusing to pick one")
+                        continue
+                    path = matches[0]
                 try:
                     value = Path(path).read_text(encoding="utf-8", errors="strict").strip()
                 except OSError:
