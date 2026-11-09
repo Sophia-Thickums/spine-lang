@@ -392,7 +392,7 @@ as the last sign of life) and fails on age, with **exit 2 for "could not look"**
 look" and "I looked and it is fine" are the two states this house keeps confusing.
 
     python3 witness_gap.py --stream stream.jsonl --max-age 180
-    python3 witness_gap.py --ssh ryan@192.168.0.44 --stream /path/stream.jsonl --max-age 180 --witness-log witness.jsonl
+    python3 witness_gap.py --ssh user@192.0.2.10 --stream /path/stream.jsonl --max-age 180 --witness-log witness.jsonl
 
 **Until that runs on a machine that is not this one, "no gaps" is unverified.** A witness on the same box
 dies with the thing it witnesses; the second machine is the whole point.

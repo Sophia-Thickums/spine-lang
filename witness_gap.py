@@ -12,7 +12,7 @@ the stream, and fails when the newest beat is older than it should be. Its own r
 separate witness log, so a silent witness is itself detectable.
 
     python3 witness_gap.py --stream /path/stream.jsonl --max-age 180
-    python3 witness_gap.py --ssh ryan@192.168.0.44 --stream /home/.../stream.jsonl --max-age 180
+    python3 witness_gap.py --ssh user@192.0.2.10 --stream /home/.../stream.jsonl --max-age 180
 
 Exit codes: 0 the stream is current · 1 the stream has stopped or gone quiet · 2 the witness could not look.
 
