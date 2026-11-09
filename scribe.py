@@ -83,10 +83,10 @@ def facts():
     mem = Path(os.path.expanduser("~/.hermes/memories/MEMORY.md"))
     if mem.exists():
         out.append(("self.memory_chars", str(len(mem.read_text(encoding="utf-8", errors="replace")))))
-    detail = Path("/home/mr_misfit/Desktop/Sophia Life/MEMORY/DETAIL")
+    detail = Path("/path/to/workspace/MEMORY/DETAIL")
     if detail.is_dir():
         out.append(("self.memory_detail_files", str(sum(1 for _ in detail.glob("*.md")))))
-    store = Path("/home/mr_misfit/Desktop/Sophia Life/WORLD/work/spine/stream.jsonl")
+    store = Path("/path/to/workspace/WORLD/work/spine/stream.jsonl")
     if store.exists():
         # The stream's own age is the one self-fact that can see a dead perceiver from inside the record.
         import time as _t
