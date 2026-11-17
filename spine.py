@@ -39,6 +39,7 @@ someone else can write one, and a shared format is only shared if a stranger may
 Exit codes: 0 all green · 1 something went red · 2 the file itself is malformed.
 """
 import json
+import math
 import os
 import re
 import sys
@@ -567,6 +568,21 @@ def observe_one(st, stale_after):
                       f"[{lo if lo is not None else '-inf'}, {hi if hi is not None else 'inf'}] — a sentinel, "
                       f"not a reading; there is nothing here to compare a claim against")
         return rec
+
+    # A declared physical range also constrains the claim, not only the
+    # observed value. Tolerance cannot make an impossible claim admissible.
+    # Preserve UNREADABLE for an out-of-range source above; this branch
+    # refuses an invalid claim against an otherwise readable source.
+    if lo is not None or hi is not None:
+        claimed_number = _as_num(st["value_raw"])
+        if (claimed_number is None or not math.isfinite(claimed_number)
+                or (lo is not None and claimed_number < lo)
+                or (hi is not None and claimed_number > hi)):
+            rec["verdict"] = "MALFORMED"
+            rec["why"] = (f"claimed value {st['value_raw']!r} is not a finite number inside "
+                          f"its declared range [{lo if lo is not None else '-inf'}, "
+                          f"{hi if hi is not None else 'inf'}]")
+            return rec
 
     # ★ RETRY, DO NOT INVENT A "FLAKY" VERDICT (outside review, 2026-10-21). The first version reported
     # FLAKY whenever two reads disagreed — which is wrong twice over: a legitimately moving surface

@@ -579,7 +579,39 @@ else
   printf 'FAIL  %-34s expected the unguarded line to read OK, got:\n%s\n' "MIN is what refuses the sentinel" "$out"; fail=$((fail+1))
 fi
 
-# (y) ★ A RANGE THAT CANNOT BE COMPARED IS A GUARD THAT CANNOT FIRE — nan/inf/empty must be refused.
+# (y) ★ A RANGE CONSTRAINS THE CLAIM, NOT ONLY THE OBSERVATION (found by saturnia, 2026-11-15).
+#     Tolerance cannot make an impossible claim admissible: a claim below MIN against a readable
+#     in-range source was reported OK because only the observation side was ever compared.
+for spec in "below:-1:50" "above:131:10"; do
+  name=${spec%%:*}; rest=${spec#*:}; claim=${rest%%:*}; tol=${rest##*:}
+  printf '§OBS.S1 WHEN host IS j = %s SRC %s SCALE 0.001 UNC bounded TOL %s MIN 0 MAX 130 SEEN %s FRESH 86400\n' "$claim" "$T/real" "$tol" "$NOW" > "$T/claim_$name.spine"
+  out=$(python3 spine.py observe "$T/claim_$name.spine" 2>&1); rc=$?
+  if printf '%s' "$out" | grep -q MALFORMED && [ "$rc" = 1 ]; then
+    printf 'PASS  %-34s MALFORMED (exit %s)\n' "a claim $name the range is refused" "$rc"; pass=$((pass+1))
+  else
+    printf 'FAIL  %-34s wanted MALFORMED/1, got exit %s:\n%s\n' "a claim $name the range is refused" "$rc" "$out"; fail=$((fail+1))
+  fi
+done
+
+# (y2) ★ CONTROL AND REMOVAL FOR (y): an in-range claim on the same source must stay OK, and the
+#      SAME claim with the range stripped must go back to OK — proving the range is what refuses it
+#      rather than the checker having started refusing claims wholesale.
+printf '§OBS.S1 WHEN host IS j = -1 SRC %s SCALE 0.001 UNC bounded TOL 50 MIN 0 MAX 130 SEEN %s FRESH 86400\n' "$T/real" "$NOW" > "$T/claim_ctrl.spine"
+sed 's/ MIN 0 MAX 130//' "$T/claim_ctrl.spine" > "$T/claim_norange.spine"
+out=$(python3 spine.py observe "$T/claim_ctrl.spine" 2>&1); rc=$?
+if printf '%s' "$out" | grep -q MALFORMED && [ "$rc" = 1 ]; then
+  printf 'PASS  %-34s MALFORMED (exit %s)\n' "claim-side range is what refuses it" "$rc"; pass=$((pass+1))
+else
+  printf 'FAIL  %-34s wanted MALFORMED/1, got exit %s:\n%s\n' "claim-side range is what refuses it" "$rc" "$out"; fail=$((fail+1))
+fi
+out=$(python3 spine.py observe "$T/claim_norange.spine" 2>&1); rc=$?
+if printf '%s' "$out" | grep -q '^OK' && [ "$rc" = 0 ]; then
+  printf 'PASS  %-34s OK without the range (removal proves it)\n' "no range means no claim-side refusal"; pass=$((pass+1))
+else
+  printf 'FAIL  %-34s expected OK/0 once the range is stripped, got exit %s:\n%s\n' "no range means no claim-side refusal" "$rc" "$out"; fail=$((fail+1))
+fi
+
+# (z) ★ A RANGE THAT CANNOT BE COMPARED IS A GUARD THAT CANNOT FIRE — nan/inf/empty must be refused.
 for spec in "MIN nan" "MAX inf" "MIN 120 MAX 0"; do
   printf '§OBS.S1 WHEN host IS j = 33 SRC %s SCALE 0.001 UNC bounded TOL 10 %s SEEN %s FRESH 86400\n' "$T/real" "$spec" "$NOW" > "$T/badrange.spine"
   out=$(python3 spine.py observe "$T/badrange.spine" 2>&1); rc=$?
