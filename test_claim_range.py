@@ -77,6 +77,24 @@ class ClaimRangeChecks(unittest.TestCase):
     def test_infinite_claim_with_range(self):
         self.check_case('inf', '33000', '10', 'MIN 0 MAX 130', 'MALFORMED')
 
+    def test_min_only_rejects_claim_below_min_at_exact_tolerance(self):
+        self.check_case('-1', '0', '1', 'MIN 0', 'MALFORMED')
+
+    def test_max_only_rejects_claim_above_max_at_exact_tolerance(self):
+        self.check_case('131', '130000', '1', 'MAX 130', 'MALFORMED')
+
+    def test_removing_min_accepts_same_claim_at_exact_tolerance(self):
+        self.check_case('-1', '0', '1', '', 'OK')
+
+    def test_removing_max_accepts_same_claim_at_exact_tolerance(self):
+        self.check_case('131', '130000', '1', '', 'OK')
+
+    def test_min_only_accepts_claim_on_min_at_exact_tolerance(self):
+        self.check_case('0', '1000', '1', 'MIN 0', 'OK')
+
+    def test_max_only_accepts_claim_on_max_at_exact_tolerance(self):
+        self.check_case('130', '129000', '1', 'MAX 130', 'OK')
+
 
 if __name__ == '__main__':
     unittest.main()
